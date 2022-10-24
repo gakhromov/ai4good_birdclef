@@ -101,6 +101,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run the training pipeline")
     parser.add_argument("--data_path", type=str, default="../datasets/birdclef22")
     parser.add_argument("--data_folder", type=str, default="../datasets/birdclef22/train_audio")
+    parser.add_argument("--dtype", type=str, default="ogg")
     args = parser.parse_args()
 
     # enable benchmark mode for more power
@@ -115,7 +116,7 @@ def main():
         config=config)
 
     # get dataset
-    dataset = get_dataset(path=args.data_path, data_folder=args.data_folder)
+    dataset = get_dataset(path=args.data_path, data_folder=args.data_folder, data_type=args.dtype)
 
     # train n_folds models
     for fold in range(config['n_folds']):

@@ -10,7 +10,7 @@ import os
 import librosa
 import noisereduce as nr
 
-def get_dataset(path: str, data_folder: str):
+def get_dataset(path: str, data_folder: str, data_type: str):
     # read the metadata
     print(f"Read config {config}")
     df = pd.read_csv(f"{path}/train_metadata.csv")
@@ -27,7 +27,7 @@ def get_dataset(path: str, data_folder: str):
     # generate n_fold datasets
     folded_ds = []
     for fold in range(config['n_folds']):
-        train_ds, valid_ds = get_data(df, fold, data_folder)
+        train_ds, valid_ds = get_data(df, fold, data_folder, type=data_type)
         folded_ds.append((train_ds, valid_ds))
 
     return folded_ds
