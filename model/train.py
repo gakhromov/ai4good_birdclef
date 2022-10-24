@@ -1,4 +1,4 @@
-import config as config
+from config import config, CFG
 from models import loss_fn, get_model
 from dataset import get_dataset
 from tqdm import tqdm
@@ -6,16 +6,24 @@ import torch
 import gc
 from torch.optim import Adam
 from sklearn.metrics import f1_score
+import wandb
+from adamp import AdamP
+from helpers import SAM
+from symbol import parameters
 
 
 def train(model, data_loader, optimizer, scheduler, device, epoch):
+    model.to(device)
     model.train()
 
     running_loss = 0
     loop = tqdm(data_loader, position=0)
+
     for i, (mels, labels) in enumerate(loop):
         mels = mels.to(device)
         labels = labels.to(device)
+
+        optimizer.zero_grad()
 
         outputs = model(mels)
         _, preds = torch.max(outputs, 1)
@@ -24,7 +32,7 @@ def train(model, data_loader, optimizer, scheduler, device, epoch):
 
         loss.backward()
         optimizer.step()
-        optimizer.zero_grad()
+        
 
         if scheduler is not None:
             scheduler.step()
@@ -56,7 +64,7 @@ def valid(model, data_loader, device, epoch):
         pred.extend(preds.view(-1).cpu().detach().numpy())
         label.extend(labels.view(-1).cpu().detach().numpy())
 
-        loop.set_description(f"Epoch [{epoch + 1}/{config.epochs}]")
+        loop.set_description(f"Epoch [{epoch + 1}/{config['epochs']}]")
         loop.set_postfix(loss=loss.item())
 
     valid_f1 = f1_score(label, pred, average='macro')
@@ -67,16 +75,21 @@ def valid(model, data_loader, device, epoch):
 def run(data, fold):
     train_loader, valid_loader = data
 
-    model = get_model("basic").to(config.device)  # check version 3 for this
+    model = get_model("cnn")
+    wandb.watch(model)
 
-    optimizer = Adam(model.parameters(), lr=config.learning_rate)
-
+    #optimizer = Adam(model.parameters(), lr=config['learning_rate'])
+    optimizer = AdamP(model.parameters(), lr=CFG.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=10)
 
     best_valid_f1 = 0
-    for epoch in range(config.epochs):
-        train_loss = train(model, train_loader, optimizer, scheduler, config.device, epoch)
-        valid_loss, valid_f1 = valid(model, valid_loader, config.device, epoch)
+
+    for epoch in range(config['epochs']):
+        train_loss = train(model, train_loader, optimizer, scheduler, config['device'], epoch)
+        valid_loss, valid_f1 = valid(model, valid_loader, config['device'], epoch)
+
+        wandb.log({"train_loss": train_loss, "valid_loss": valid_loss, "valid_f1": valid_f1})
+
         if valid_f1 > best_valid_f1:
             print(f"Validation F1 Improved - {best_valid_f1} ---> {valid_f1}")
             torch.save(model.state_dict(), f'./model_{fold}.bin')
@@ -87,9 +100,23 @@ def run(data, fold):
 
 
 def main():
+
+    # enable benchmark mode for more power
+    torch.backends.cudnn.benchmark = True
+
+    # setup wandb
+    wandb.login(key = "13be45bcff4cb1b250c86080f4b3e7ca5cfd29c2")
+    print(config)
+    wandb.init(
+        project="birdclef",
+        entity="matvogel",
+        config=config)
+
+    # get dataset
     dataset = get_dataset()
 
-    for fold in range(config.n_folds):
+    # train n_folds models
+    for fold in range(config['n_folds']):
         print("=" * 30)
         print("Training Fold - ", fold)
         print("=" * 30)
@@ -98,7 +125,6 @@ def main():
 
         gc.collect()
         torch.cuda.empty_cache()
-        break  # To run for all the folds, just remove this break
 
 
 if __name__ == "__main__":

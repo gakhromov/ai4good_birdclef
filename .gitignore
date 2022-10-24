@@ -7,6 +7,10 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+data_processing
+datasets
+wandb
+model/wandb
 .Python
 build/
 develop-eggs/
