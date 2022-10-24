@@ -40,7 +40,7 @@ def get_data(df, fold, data_folder, type="ogg"):
     if type=="ogg":
         train_dataset = BirdClefOggDataset(df=train_df, path=data_folder, sr=config['sample_rate'], duration=config['duration'])
         valid_dataset = BirdClefOggDataset(df=valid_df, path=data_folder, sr=config['sample_rate'], duration=config['duration'])
-    if type=="mel":
+    elif type=="mel":
         train_dataset = BirdClefMelDataset(train_df, data_folder, config['sample_rate'], config['duration'])
         valid_dataset = BirdClefMelDataset(valid_df, data_folder, config['sample_rate'], config['duration'])
     else:
