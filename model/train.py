@@ -8,9 +8,7 @@ from torch.optim import Adam
 from sklearn.metrics import f1_score
 import wandb
 from adamp import AdamP
-from helpers import SAM
-from symbol import parameters
-
+import argparse
 
 def train(model, data_loader, optimizer, scheduler, device, epoch):
     model.to(device)
@@ -100,12 +98,15 @@ def run(data, fold):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Run the training pipeline")
+    parser.add_argument("--data_path", type=str, default="../datasets/birdclef22")
+    args = parser.parse_args()
 
     # enable benchmark mode for more power
     torch.backends.cudnn.benchmark = True
 
     # setup wandb
-    wandb.login(key = "13be45bcff4cb1b250c86080f4b3e7ca5cfd29c2")
+    
     print(config)
     wandb.init(
         project="birdclef",
