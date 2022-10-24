@@ -7,7 +7,8 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import os
-
+import librosa
+import noisereduce as nr
 
 def get_dataset():
     # read the metadata
@@ -30,12 +31,19 @@ def get_dataset():
     return folded_ds
 
 
-def get_data(df, fold):
+def get_data(df, fold, type="ogg"):
     train_df = df[df['fold'] != fold].reset_index(drop=True)
     valid_df = df[df['fold'] == fold].reset_index(drop=True)
 
-    train_dataset = BirdClefDataset(train_df, config['sample_rate'], config['duration'])
-    valid_dataset = BirdClefDataset(valid_df, config['sample_rate'], config['duration'])
+    if type=="ogg":
+        train_dataset = BirdClefOggDataset(train_df, config['sample_rate'], config['duration'])
+        valid_dataset = BirdClefOggDataset(valid_df, config['sample_rate'], config['duration'])
+    if type=="mel":
+        train_dataset = BirdClefMelDataset(train_df, config['sample_rate'], config['duration'])
+        valid_dataset = BirdClefMelDataset(valid_df, config['sample_rate'], config['duration'])
+    else:
+        exit("Wrong Dataset type chosen.")
+
 
     train_loader = DataLoader(train_dataset,
                               batch_size=config['train_batch_size'],
@@ -51,7 +59,7 @@ def get_data(df, fold):
 
     return train_loader, valid_loader
 
-class BirdClefDataset(Dataset):
+class BirdClefMelDataset(Dataset):
     def __init__(self, df, sr, duration, aug=None):
         self.mel_paths = df['filename'].values
         self.labels = df['primary_label_encoded'].values
@@ -91,6 +99,62 @@ class BirdClefDataset(Dataset):
 
         # stack layers
         image = mel_normal
+
+        image = torch.tensor(image, dtype=torch.float32).unsqueeze(0)
+        label = torch.tensor(self.labels[index]).type(torch.LongTensor)
+
+        return image, label
+
+
+class BirdClefOggDataset(Dataset):
+    def __init__(self, df, sr, duration, aug=None, fmin=100, fmax=12000, nmel=64, fftlength=1024):
+        self.paths = df['filename'].values
+        self.labels = df['primary_label_encoded'].values
+        self.augmentation = aug
+        self.sr = sr
+        self.num_samples = sr * duration // config['n_fft']
+        self.fmin = fmin
+        self.fmax=fmax
+        self.nm = nmel
+        self.fftl = fftlength
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, index):
+        path = self.paths[index]
+
+        # load audio, atm only first 30 seconds
+        y, sr = librosa.load(os.path.join(config['data_path'],'train_audio', path), duration=30, sr=self.sr res_type='kaiser_fast')
+
+        # denoise
+        y = nr.reduce_noise(y, sr=self.sr, stationary=True)
+
+        # calculate mel spec
+        mel_spec = librosa.feature.melspectrogram(y=y, sr=self.sr, fmin=self.fmin, fmax=self.fmax, n_mels=self.nm, n_fft=self.fftl)
+        # convert to db
+        mel_spec = librosa.power_to_db(mel_spec, ref=np.max)
+
+        # zero pad if needed
+        # Printing the shape of the mel_normal array.
+        difference = self.num_samples - mel_spec.shape[1]
+
+        if difference > 0:
+            padding = np.zeros((mel_spec.shape[0], difference))
+            mel_spec = np.hstack((mel_spec, padding))
+        if difference < 0:
+            mel_spec = mel_spec[:,:self.num_samples]
+
+
+        # Augmentation
+        #mel = self.transformation(signal)
+
+        # normalize layers
+        mel_spec = mel_spec - np.min(mel_spec)
+        mel_spec = mel_spec / np.max(mel_spec)
+
+        # stack layers
+        image = mel_spec
 
         image = torch.tensor(image, dtype=torch.float32).unsqueeze(0)
         label = torch.tensor(self.labels[index]).type(torch.LongTensor)
