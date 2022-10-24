@@ -100,13 +100,14 @@ def run(data, fold):
 def main():
     parser = argparse.ArgumentParser(description="Run the training pipeline")
     parser.add_argument("--data_path", type=str, default="../datasets/birdclef22")
+    parser.add_argument("--data_folder", type=str, default="../datasets/birdclef22/train_audio")
     args = parser.parse_args()
 
     # enable benchmark mode for more power
     torch.backends.cudnn.benchmark = True
 
     # setup wandb
-    
+
     print(config)
     wandb.init(
         project="birdclef",
@@ -114,7 +115,7 @@ def main():
         config=config)
 
     # get dataset
-    dataset = get_dataset()
+    dataset = get_dataset(path=args.data_path, data_folder=args.data_folder)
 
     # train n_folds models
     for fold in range(config['n_folds']):
