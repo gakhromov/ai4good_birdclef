@@ -125,7 +125,7 @@ class BirdClefOggDataset(Dataset):
         path = self.paths[index]
 
         # load audio, atm only first 30 seconds
-        y, sr = librosa.load(os.path.join(config['data_path'],'train_audio', path), duration=30, sr=self.sr res_type='kaiser_fast')
+        y, sr = librosa.load(path=os.path.join(config['data_path'],'train_audio', path), duration=30, sr=self.sr, res_type='kaiser_fast')
 
         # denoise
         y = nr.reduce_noise(y, sr=self.sr, stationary=True)
