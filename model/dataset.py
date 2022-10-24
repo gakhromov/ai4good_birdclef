@@ -20,7 +20,7 @@ def get_dataset(path: str, data_folder: str):
     df['primary_label_encoded'] = encoder.fit_transform(df['primary_label'])
 
     # make folds
-    skf = StratifiedKFold(n_splits=config['n_folds'], random_state=42)
+    skf = StratifiedKFold(n_splits=config['n_folds'])
     for k, (_, val_ind) in enumerate(skf.split(X=df, y=df['primary_label_encoded'])):
         df.loc[val_ind, 'fold'] = k
 
