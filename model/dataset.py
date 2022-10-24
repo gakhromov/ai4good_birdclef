@@ -49,16 +49,16 @@ def get_data(df, fold, data_folder, type="ogg"):
 
     train_loader = DataLoader(train_dataset,
                               batch_size=config['train_batch_size'],
-                              num_workers=8,
+                              num_workers=4,
                               pin_memory=True,
-                              prefetch_factor=8,
+                              prefetch_factor=4,
                               shuffle=True)
 
     valid_loader = DataLoader(valid_dataset,
                               batch_size=config['valid_batch_size'],
-                              num_workers=8,
+                              num_workers=4,
                               pin_memory=True,
-                              prefetch_factor=8,
+                              prefetch_factor=4,
                               shuffle=False)
 
     return train_loader, valid_loader
