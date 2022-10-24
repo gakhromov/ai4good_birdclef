@@ -10,37 +10,39 @@ import os
 import librosa
 import noisereduce as nr
 
-def get_dataset():
+def get_dataset(path: str, data_folder: str):
     # read the metadata
     print(f"Read config {config}")
-    df = pd.read_csv(f"{config['data_path']}/train_metadata.csv")
+    df = pd.read_csv(f"{path}/train_metadata.csv")
+
     # encode labels
     encoder = LabelEncoder()
     df['primary_label_encoded'] = encoder.fit_transform(df['primary_label'])
+
     # make folds
-    skf = StratifiedKFold(n_splits=config['n_folds'])
+    skf = StratifiedKFold(n_splits=config['n_folds'], random_state=42)
     for k, (_, val_ind) in enumerate(skf.split(X=df, y=df['primary_label_encoded'])):
         df.loc[val_ind, 'fold'] = k
 
     # generate n_fold datasets
     folded_ds = []
     for fold in range(config['n_folds']):
-        train_ds, valid_ds = get_data(df, fold)
+        train_ds, valid_ds = get_data(df, fold, data_folder)
         folded_ds.append((train_ds, valid_ds))
 
     return folded_ds
 
 
-def get_data(df, fold, type="ogg"):
+def get_data(df, fold, data_folder, type="ogg"):
     train_df = df[df['fold'] != fold].reset_index(drop=True)
     valid_df = df[df['fold'] == fold].reset_index(drop=True)
 
     if type=="ogg":
-        train_dataset = BirdClefOggDataset(train_df, config['sample_rate'], config['duration'])
-        valid_dataset = BirdClefOggDataset(valid_df, config['sample_rate'], config['duration'])
+        train_dataset = BirdClefOggDataset(df=train_df, path=data_folder, sr=config['sample_rate'], duration=config['duration'])
+        valid_dataset = BirdClefOggDataset(df=valid_df, path=data_folder, sr=config['sample_rate'], duration=config['duration'])
     if type=="mel":
-        train_dataset = BirdClefMelDataset(train_df, config['sample_rate'], config['duration'])
-        valid_dataset = BirdClefMelDataset(valid_df, config['sample_rate'], config['duration'])
+        train_dataset = BirdClefMelDataset(train_df, data_folder, config['sample_rate'], config['duration'])
+        valid_dataset = BirdClefMelDataset(valid_df, data_folder, config['sample_rate'], config['duration'])
     else:
         exit("Wrong Dataset type chosen.")
 
@@ -60,8 +62,8 @@ def get_data(df, fold, type="ogg"):
     return train_loader, valid_loader
 
 class BirdClefMelDataset(Dataset):
-    def __init__(self, df, sr, duration, aug=None):
-        self.mel_paths = df['filename'].values
+    def __init__(self, df, path, sr, duration, aug=None):
+        self.mel_paths = [os.path.join(path, fn) for fn in df['filename'].values]
         self.labels = df['primary_label_encoded'].values
         self.augmentation = aug
         self.sr = sr
@@ -76,7 +78,7 @@ class BirdClefMelDataset(Dataset):
         path = path.replace('ogg', 'npz')
 
         # load the compressed file
-        specs = np.load(os.path.join(config['mel_path'], path), allow_pickle=True)
+        specs = np.load(path, allow_pickle=True)
         mel_normal = specs.f.original
 
         # zero pad if needed
@@ -107,8 +109,9 @@ class BirdClefMelDataset(Dataset):
 
 
 class BirdClefOggDataset(Dataset):
-    def __init__(self, df, sr, duration, aug=None, fmin=100, fmax=12000, nmel=64, fftlength=1024):
-        self.paths = df['filename'].values
+    def __init__(self, df, path, sr, duration, aug=None, fmin=100, fmax=12000, nmel=64, fftlength=1024):
+        # extract the filenames
+        self.paths = [os.path.join(path, fn) for fn in df['filename'].values]
         self.labels = df['primary_label_encoded'].values
         self.augmentation = aug
         self.sr = sr
@@ -125,7 +128,7 @@ class BirdClefOggDataset(Dataset):
         path = self.paths[index]
 
         # load audio, atm only first 30 seconds
-        y, sr = librosa.load(path=os.path.join(config['data_path'],'train_audio', path), duration=30, sr=self.sr, res_type='kaiser_fast')
+        y, sr = librosa.load(path=path, duration=30, sr=self.sr, res_type='kaiser_fast')
 
         # denoise
         y = nr.reduce_noise(y, sr=self.sr, stationary=True)
