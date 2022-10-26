@@ -9,6 +9,7 @@ import numpy as np
 import os
 import librosa
 import noisereduce as nr
+import glob
 
 def get_dataset(path: str, data_folder: str, data_type: str):
     # read the metadata
@@ -63,10 +64,15 @@ def get_data(df, fold, data_folder, type="ogg"):
 
     return train_loader, valid_loader
 
+
+
 class BirdClefMelDataset(Dataset):
-    def __init__(self, df, path, sr, duration, aug=None):
-        self.mel_paths = [os.path.join(path, fn) for fn in df['filename'].values]
-        self.labels = df['primary_label_encoded'].values
+    def __init__(self, df, mel_path, sr, duration, aug=None):
+
+        # extract the classes and filenames
+        folders = os.listdir(mel_path)
+        self.names = glob.glob(folders)
+        print(self.names)
         self.augmentation = aug
         self.sr = sr
         self.num_samples = sr * duration // config['n_fft']
