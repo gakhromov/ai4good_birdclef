@@ -35,6 +35,7 @@ class BCEFocalLoss(nn.Module):
         self.gamma = gamma
 
     def forward(self, preds, targets):
+        targets = targets.float()
         bce_loss = nn.BCEWithLogitsLoss(reduction='none')(preds, targets)
         probas = torch.sigmoid(preds)
         loss = targets * self.alpha * \
@@ -44,14 +45,14 @@ class BCEFocalLoss(nn.Module):
         return loss
 
 
-def loss_fn(outputs, labels):
+def loss_ce(outputs, labels):
     return nn.CrossEntropyLoss()(outputs, labels)
 
-
-def loss_fn_logits(logits, targets):
-    loss_fct = BCEFocalLoss()
-    loss = loss_fct(logits, targets)
+def loss_bcefocal(logits, targets):
+    bcef = BCEFocalLoss()
+    loss = bcef(logits, targets)
     return loss
+
 
 class CNNModel(nn.Module):
     def __init__(self, in_dim):

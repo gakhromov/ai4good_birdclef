@@ -2,7 +2,7 @@ config = {
     # TRAIN SETTINGS
     "epochs": 25,
     "n_classes": 152,
-    "n_folds": 4,
+    "n_folds": 3,
     "num_classes": 152,
     "train_batch_size": 32,
     "valid_batch_size": 32,

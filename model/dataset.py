@@ -4,46 +4,75 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import Dataset, DataLoader
 import torch
-import torch.nn.functional as F
 import numpy as np
 import os
 import librosa
 import noisereduce as nr
 import glob
+import random
 
-def get_dataset(path: str, data_folder: str, data_type: str):
+def combine_labels(prim, sec):
+    # remove all the signs
+    sec = sec.replace("'", "")
+    sec = sec.replace("[", "")
+    sec = sec.replace("]", "")
+    sec = sec.replace(" ", "")
+    
+    sec_items = sec.split(',')
+    if sec_items[0] == '':
+        return [prim]
+    comb = [prim]
+    comb = comb + sec_items
+    return comb
+
+
+def get_dataset(args):
+    path=args.data_path
+    data_folder=args.data_folder
+    data_type=args.dtype
+    secondary=args.use_secondary
+
     # read the metadata
     print(f"Read config {config}")
     df = pd.read_csv(f"{path}/train_metadata.csv")
 
-    # encode labels
+    # encode primary labels
     encoder = LabelEncoder()
-    df['primary_label_encoded'] = encoder.fit_transform(df['primary_label'])
+    primary = encoder.fit_transform(df['primary_label'])
+    df['pri_enc'] = primary
+    # encode secondary labels
+    if secondary:
+        classes = df['primary_label'].unique()
+        df['label'] = [combine_labels(df['primary_label'][idx], df['secondary_labels'][idx]) for idx in range(len(df))]
+        secondary = [np.sum([np.where(item == classes, 1, 0) for item in row], axis=0) for row in df['label']]
+        df['sec_enc'] = secondary 
 
-    # make folds
+    # make folds, stratify with primary labels anyways, even when we have secondary label usage
     skf = StratifiedKFold(n_splits=config['n_folds'])
-    for k, (_, val_ind) in enumerate(skf.split(X=df, y=df['primary_label_encoded'])):
+    for k, (_, val_ind) in enumerate(skf.split(X=df, y=primary)):
         df.loc[val_ind, 'fold'] = k
-
+    
     # generate n_fold datasets
     folded_ds = []
     for fold in range(config['n_folds']):
-        train_ds, valid_ds = get_data(df, fold, data_folder, type=data_type)
+        train_ds, valid_ds = get_data(df, fold, data_folder, type=data_type, sec=secondary)
         folded_ds.append((train_ds, valid_ds))
 
     return folded_ds
 
 
-def get_data(df, fold, data_folder, type="ogg"):
+def get_data(df, fold, data_folder, type="ogg", sec=False):
+    # extract fold
     train_df = df[df['fold'] != fold].reset_index(drop=True)
     valid_df = df[df['fold'] == fold].reset_index(drop=True)
-
+    # if ogg, load the data from ogg files, convert to numpy and extract mel, VERY SLOW
+    # if mel, directly load the specs from npz, normalize and return
     if type=="ogg":
         train_dataset = BirdClefOggDataset(df=train_df, path=data_folder, sr=config['sample_rate'], duration=config['duration'])
         valid_dataset = BirdClefOggDataset(df=valid_df, path=data_folder, sr=config['sample_rate'], duration=config['duration'])
     elif type=="mel":
-        train_dataset = BirdClefMelDataset(train_df, data_folder, config['sample_rate'], config['duration'])
-        valid_dataset = BirdClefMelDataset(valid_df, data_folder, config['sample_rate'], config['duration'])
+        train_dataset = BirdClefMelDataset(df=train_df, mel_path=data_folder, sr=config['sample_rate'], duration=config['duration'], use_secondary=sec)
+        valid_dataset = BirdClefMelDataset(df=valid_df, mel_path=data_folder, sr=config['sample_rate'], duration=config['duration'], use_secondary=sec)
     else:
         exit("Wrong Dataset type chosen.")
 
@@ -67,37 +96,35 @@ def get_data(df, fold, data_folder, type="ogg"):
 
 
 class BirdClefMelDataset(Dataset):
-    def __init__(self, df, mel_path, sr, duration, aug=None):
+    def __init__(self, df, mel_path, sr, duration, aug=None, use_secondary=False):
 
         # extract the classes and filenames
         folders = os.listdir(mel_path)
-        self.names = glob.glob(folders)
-        print(self.names)
+        filenames = []
+        for f in folders:
+            files = [f'{mel_path}/{f}/{file}' for file in os.listdir(os.path.join(mel_path, f))]
+            filenames.append(files)
+
+        self.df = df
+        self.mel_path = mel_path
         self.augmentation = aug
         self.sr = sr
         self.num_samples = sr * duration // config['n_fft']
+        self.secondary = use_secondary
 
     def __len__(self):
-        return len(self.mel_paths)
+        return len(self.df)
 
     def __getitem__(self, index):
-        # change index from / to _
-        path = self.mel_paths[index]
-        path = path.replace('ogg', 'npz')
+        # extract the item chosen
+        item = self.df.iloc[index,:]
+        root = f"{self.mel_path}/{item['filename'].split('.')[0]}*"
+        # random file which matches the root
+        fpath = glob.glob(root)
 
-        # load the compressed file
-        specs = np.load(path, allow_pickle=True)
-        mel_normal = specs.f.original
-
-        # zero pad if needed
-        # Printing the shape of the mel_normal array.
-        difference = self.num_samples - mel_normal.shape[1]
-
-        if difference > 0:
-            padding = np.zeros((mel_normal.shape[0], difference))
-            mel_normal = np.hstack((mel_normal, padding))
-        if difference < 0:
-            mel_normal = mel_normal[:,:self.num_samples]
+        # load one random choice of the compressed file
+        specs = np.load(random.choice(fpath), allow_pickle=True)
+        mel_normal = specs.f.mel
 
 
         # Augmentation
@@ -109,9 +136,12 @@ class BirdClefMelDataset(Dataset):
 
         # stack layers
         image = mel_normal
-
+        if self.secondary:
+            label = torch.tensor(self.df['sec_enc'][index]).type(torch.LongTensor)
+        else:
+            label = torch.tensor(self.df['pri_enc'][index]).type(torch.LongTensor)
+        
         image = torch.tensor(image, dtype=torch.float32).unsqueeze(0)
-        label = torch.tensor(self.labels[index]).type(torch.LongTensor)
 
         return image, label
 
