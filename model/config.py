@@ -8,10 +8,14 @@ config = {
     "valid_batch_size": 32,
     "learning_rate": 1e-4,
     "device": 'cuda',
+    "scheduler": 'CosineAnnealingWarmRestarts',
+    "weight_decay": 1e-6,
+
 
     # DATA SETTINGS
     "data_path": 'datasets/birdclef22',
     "mel_path": 'data_processing/numpy_mel',
+    "use_secondary": False,
     "sample_rate": 32_000,
     "n_fft": 1024,
     "hop_length": 512,
@@ -29,14 +33,3 @@ cnn_conf = {
     'activation': 'relu',
     'regularizer': 0.001
 }
-
-
-class CFG:
-    scheduler = 'CosineAnnealingWarmRestarts'
-    T_max = 10
-    T_0 = 10
-    lr = 1e-4
-    weight_decay = 1e-6
-    lr = 1e-4
-    min_lr = 1e-6
-    num_classes = 152

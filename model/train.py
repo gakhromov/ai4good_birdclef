@@ -1,32 +1,35 @@
-from config import config, CFG
+from config import config
+from helpers import dotdict
 from models import loss_ce, get_model, loss_bcefocal
 from dataset import get_dataset
 from tqdm import tqdm
 import torch
 import gc
 from torch.optim import Adam
-from sklearn.metrics import f1_score
+from sklearn.metrics import precision_recall_fscore_support
 import wandb
 import argparse
+import numpy as np
 
-def train(model, data_loader, optimizer, scheduler, loss_fn, device, epoch):
+def train(model, data_loader, optimizer, scheduler, conf, epoch):
+    device = conf.device
+    loss_fn = loss_bcefocal if conf.use_secondary else loss_ce
     model.to(device)
     model.train()
-
     running_loss = 0
-    running_f1 = 0
-    pred = []
-    label = []
+
+    prec= 0
+    rec = 0
+    f1 = 0
     loop = tqdm(data_loader, position=0)
 
     for i, (mels, labels) in enumerate(loop):
+        model.zero_grad()
         mels = mels.to(device)
         labels = labels.to(device)
 
-        optimizer.zero_grad()
-
         outputs = model(mels)
-        preds = torch.sigmoid(outputs) > 0.5
+        preds = torch.sigmoid(outputs).to(device)
 
         loss = loss_fn(outputs, labels)
 
@@ -39,23 +42,43 @@ def train(model, data_loader, optimizer, scheduler, loss_fn, device, epoch):
 
         running_loss += loss.item()
 
-        pred.extend(preds.view(-1).cpu().detach().numpy())
-        label.extend(labels.view(-1).cpu().detach().numpy())
-        running_f1 += f1_score(label, pred, average='macro')
+        p,r, f, _ = precision_recall_fscore_support(
+            average='weighted',
+            y_pred = preds.view(-1).detach().cpu().numpy() > 0.5,
+            y_true=labels.view(-1).detach().cpu().numpy(),
+            zero_division=0)
+        prec += p
+        rec += r
+        f1 += f
 
-        loop.set_description(f"Train Epoch [{epoch + 1}/{config['epochs']}]")
-        loop.set_postfix(loss=loss.item())
+        loop.set_description(f"Train Epoch [{epoch + 1}/{conf.epochs}")
+        loop.set_postfix(loss=loss.item(), f1=f, precision=p, recall=r)
 
-    return running_loss / len(data_loader), running_f1 / len(data_loader)
+    # log the last prediction
+    #l = labels.cpu().detach().numpy()[0].reshape(-1,1)
+    #p = preds.cpu().detach().numpy()[0].reshape(-1,1).astype('int')
+    #data = np.hstack((l,p))
+    #columns = ["Label", "Prediction"]
+    #table =  wandb.Table(data=data, columns=columns)
+    #wandb.log({"predictions": table})
+
+    lendl = len(data_loader)
+    running_loss /= lendl
+    f1 /= lendl
+    prec /= lendl
+    rec /= lendl
+
+    return running_loss, prec, rec, f1
 
 
-def valid(model, data_loader, loss_fn, device, epoch):
+def valid(model, data_loader, conf, epoch):
     model.eval()
-
+    loss_fn = loss_bcefocal if conf.use_secondary else loss_ce
+    device = conf.device
     running_loss = 0
-    running_f1 = 0
-    pred = []
-    label = []
+    f1 = 0
+    prec = 0
+    rec = 0
 
     loop = tqdm(data_loader, position=0)
     for mels, labels in loop:
@@ -63,22 +86,29 @@ def valid(model, data_loader, loss_fn, device, epoch):
         labels = labels.to(device)
 
         outputs = model(mels)
-        preds = torch.sigmoid(outputs) > 0.5
+        preds = torch.sigmoid(outputs).to(device)
         loss = loss_fn(outputs, labels)
 
         running_loss += loss.item()
 
-        pred.extend(preds.view(-1).cpu().detach().numpy())
-        label.extend(labels.view(-1).cpu().detach().numpy())
+        p,r, f, _ = precision_recall_fscore_support(
+            average='weighted',
+            y_pred = preds.view(-1).detach().cpu().numpy() > 0.5,
+            y_true=labels.view(-1).detach().cpu().numpy(),
+            zero_division=0)
+        prec += p
+        rec += r
+        f1 += f
+        loop.set_description(f"Valid Epoch [{epoch + 1}/{conf.epochs}")
+        loop.set_postfix(loss=loss.item(), f1=f, precision=p, recall=r)
 
-        running_f1 += f1_score(label, pred, average='macro')
+    lendl = len(data_loader)
+    running_loss /= lendl
+    f1 /= lendl
+    prec /= lendl
+    rec /= lendl
 
-        loop.set_description(f"Valid Epoch [{epoch + 1}/{config['epochs']}]")
-        loop.set_postfix(loss=loss.item())
-
-    valid_f1 = running_f1 / len(data_loader)
-
-    return running_loss / len(data_loader), valid_f1
+    return running_loss, prec, rec, f1
 
 
 def run(data, fold, args):
@@ -87,18 +117,27 @@ def run(data, fold, args):
     model = get_model("cnn")
     wandb.watch(model)
 
-    optimizer = Adam(model.parameters(), lr=config['learning_rate'])
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=10)
+    cfg = dotdict(config)
 
-    loss = loss_bcefocal if args.use_secondary else loss_ce
+    optimizer = Adam(model.parameters(), lr=cfg.learning_rate)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=10)
 
     best_valid_f1 = 0
 
-    for epoch in range(config['epochs']):
-        train_loss, train_f1 = train(model, train_loader, optimizer, scheduler, loss, config['device'], epoch)
-        valid_loss, valid_f1 = valid(model, valid_loader,loss, config['device'], epoch)
+    for epoch in range(cfg.epochs):
+        train_loss, train_prec, train_rec, train_f1 = train(model, train_loader, optimizer, scheduler, cfg, epoch)
+        valid_loss, valid_prec, valid_rec, valid_f1 = valid(model, valid_loader, cfg, epoch)
 
-        wandb.log({"train_loss": train_loss, "train_f1": train_f1, "valid_loss": valid_loss, "valid_f1": valid_f1})
+        wandb.log({
+            "train_loss": train_loss,
+            "train_f1": train_f1,
+            "train_recall": train_rec,
+            "train_precision": train_prec,
+            "valid_loss": valid_loss,
+            "valid_precision": valid_prec,
+            "valid_recall": valid_rec,
+            "valid_f1": valid_f1
+            })
 
         if valid_f1 > best_valid_f1:
             print(f"Validation F1 Improved - {best_valid_f1} ---> {valid_f1}")
@@ -113,7 +152,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run the training pipeline")
     parser.add_argument("--data_path", type=str, default="../datasets/numpy_mel", help="Location of the metadata csv")
     parser.add_argument("--data_folder", type=str, default="../datasets/numpy_mel/data", help="Location of the individual bird folders")
-    parser.add_argument("--use_secondary", type=bool, default=False, help="Use the secondary label")
+    parser.add_argument("--use_secondary", type=bool, default=True, help="Use the secondary label")
     parser.add_argument("--dtype", type=str, default="mel")
     args = parser.parse_args()
     print("Running training with following args: \n", args)

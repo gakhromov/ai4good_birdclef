@@ -1,4 +1,3 @@
-from config import CFG
 import torch
 from torch.optim import lr_scheduler
 import torch
@@ -12,12 +11,12 @@ def flatten_list(l):
 
 
 
-def fetch_scheduler(optimizer, warm_start=False):
-    if CFG.scheduler == 'CosineAnnealingLR':
-        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=CFG.T_max, eta_min=CFG.min_lr)
-    elif CFG.scheduler == 'CosineAnnealingWarmRestarts':
-        scheduler = lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=CFG.T_0, T_mult=1, eta_min=CFG.min_lr)
-    elif CFG.scheduler == None:
+def fetch_scheduler(optimizer, config):
+    if config.scheduler == 'CosineAnnealingLR':
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
+    elif config.scheduler == 'CosineAnnealingWarmRestarts':
+        scheduler = lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1)
+    elif config.scheduler == None:
         return None
         
     return scheduler
@@ -145,15 +144,23 @@ class LabelSmoothingLoss(nn.Module):
     
 
 class TaylorCrossEntropyLoss(nn.Module):
-    def __init__(self, n=2, ignore_index=-1, reduction='mean', smoothing=0.2):
+    def __init__(self, n=2, ignore_index=-1, reduction='mean', smoothing=0.2, config=None):
         super(TaylorCrossEntropyLoss, self).__init__()
         assert n % 2 == 0
         self.taylor_softmax = TaylorSoftmax(dim=1, n=n)
         self.reduction = reduction
         self.ignore_index = ignore_index
-        self.lab_smooth = LabelSmoothingLoss(CFG.num_classes, smoothing=smoothing)
+        self.lab_smooth = LabelSmoothingLoss(config.num_classes, smoothing=smoothing)
 
     def forward(self, logits, labels):
         log_probs = self.taylor_softmax(logits).log()
         loss = self.lab_smooth(log_probs, labels)
         return loss
+
+
+class dotdict(dict):
+    """dot.notation access to dictionary attributes"""
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
