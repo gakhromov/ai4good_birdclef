@@ -1,4 +1,4 @@
-config = {
+config={
     # TRAIN SETTINGS
     "epochs": 25,
     "n_classes": 152,
@@ -16,14 +16,14 @@ config = {
     "data_path": 'datasets/birdclef22',
     "mel_path": 'data_processing/numpy_mel',
     "use_secondary": False,
-    "sample_rate": 32_000,
+    "sample_rate": 22_050,
     "n_fft": 1024,
     "hop_length": 512,
     "n_mels": 64,
     "duration": 30,
 }
 
-cnn_conf = {
+cnn_conf={
     'filters': [16, 32, 64, 128, 256],
     'kernels': [(3,3), (3,5), (3,5), (3,5), (3,5)],
     'strides': [(2,2), (2,2), (1,3), (1,3), (1,3)],
@@ -32,4 +32,15 @@ cnn_conf = {
     'batch_norm': True,
     'activation': 'relu',
     'regularizer': 0.001
+}
+
+signal_conf={
+    "sr": 22050,
+    "fmin": 200,
+    "fmax": 10000,
+    "nmels": 64,
+    "nfft": 1024,
+    "sr": 22_050,
+    "len_segment": 30,
+    "lseg_samples":30*22_050
 }

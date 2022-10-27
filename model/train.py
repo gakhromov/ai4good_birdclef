@@ -29,7 +29,12 @@ def train(model, data_loader, optimizer, scheduler, conf, epoch):
         labels = labels.to(device)
 
         outputs = model(mels)
-        preds = torch.sigmoid(outputs).to(device)
+
+        # calculate sigmoid for multilabel
+        if conf.use_secondary:
+            preds = torch.sigmoid(outputs)
+        else:
+            _, preds = torch.max(outputs, 1)
 
         loss = loss_fn(outputs, labels)
 
@@ -42,25 +47,24 @@ def train(model, data_loader, optimizer, scheduler, conf, epoch):
 
         running_loss += loss.item()
 
-        p,r, f, _ = precision_recall_fscore_support(
-            average='weighted',
-            y_pred = preds.view(-1).detach().cpu().numpy() > 0.5,
-            y_true=labels.view(-1).detach().cpu().numpy(),
-            zero_division=0)
+        if conf.use_secondary:
+            p,r, f, _ = precision_recall_fscore_support(
+                average='micro',
+                y_pred = preds.view(-1).detach().cpu().numpy() > 0.5,
+                y_true=labels.view(-1).detach().cpu().numpy(),
+                zero_division=0)
+        else:
+            p,r, f, _ = precision_recall_fscore_support(
+                average='macro',
+                y_pred = preds.view(-1).detach().cpu().numpy(),
+                y_true=labels.view(-1).detach().cpu().numpy(),
+                zero_division=0)
         prec += p
         rec += r
         f1 += f
 
         loop.set_description(f"Train Epoch [{epoch + 1}/{conf.epochs}")
         loop.set_postfix(loss=loss.item(), f1=f, precision=p, recall=r)
-
-    # log the last prediction
-    #l = labels.cpu().detach().numpy()[0].reshape(-1,1)
-    #p = preds.cpu().detach().numpy()[0].reshape(-1,1).astype('int')
-    #data = np.hstack((l,p))
-    #columns = ["Label", "Prediction"]
-    #table =  wandb.Table(data=data, columns=columns)
-    #wandb.log({"predictions": table})
 
     lendl = len(data_loader)
     running_loss /= lendl
@@ -86,16 +90,29 @@ def valid(model, data_loader, conf, epoch):
         labels = labels.to(device)
 
         outputs = model(mels)
-        preds = torch.sigmoid(outputs).to(device)
+        # calculate sigmoid for multilabel
+        if conf.use_secondary:
+            preds = torch.sigmoid(outputs)
+        else:
+            _, preds = torch.max(outputs, 1)
+
         loss = loss_fn(outputs, labels)
 
         running_loss += loss.item()
 
-        p,r, f, _ = precision_recall_fscore_support(
-            average='weighted',
-            y_pred = preds.view(-1).detach().cpu().numpy() > 0.5,
-            y_true=labels.view(-1).detach().cpu().numpy(),
-            zero_division=0)
+        if conf.use_secondary:
+            p,r, f, _ = precision_recall_fscore_support(
+                average='micro',
+                y_pred = preds.view(-1).detach().cpu().numpy() > 0.5,
+                y_true=labels.view(-1).detach().cpu().numpy(),
+                zero_division=0)
+        else:
+            p,r, f, _ = precision_recall_fscore_support(
+                average='macro',
+                y_pred = preds.view(-1).detach().cpu().numpy(),
+                y_true=labels.view(-1).detach().cpu().numpy(),
+                zero_division=0)
+        
         prec += p
         rec += r
         f1 += f
@@ -152,7 +169,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run the training pipeline")
     parser.add_argument("--data_path", type=str, default="../datasets/numpy_mel", help="Location of the metadata csv")
     parser.add_argument("--data_folder", type=str, default="../datasets/numpy_mel/data", help="Location of the individual bird folders")
-    parser.add_argument("--use_secondary", type=bool, default=True, help="Use the secondary label")
+    parser.add_argument("--use_secondary", type=bool, default=False, help="Use the secondary label")
     parser.add_argument("--dtype", type=str, default="mel")
     args = parser.parse_args()
     print("Running training with following args: \n", args)

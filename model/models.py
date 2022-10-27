@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from config import config, cnn_conf
 import torch
+import torchaudio
 
 class DummyModel(nn.Module):
     def __init__(self):
@@ -126,3 +127,22 @@ def get_model(model="basic", in_dim=1):
         return DummyModel()
     if model == "cnn":
         return CNNModel(in_dim)
+
+
+class MelDB(nn.Module):
+    def __init__(self):
+        super().__init__()   
+        self.mel = torchaudio.transforms.MelSpectrogram(
+                    sample_rate=22_050,
+                    n_fft=1024,
+                    f_min=200,
+                    f_max=10_000,
+                    hop_length=512,
+                    n_mels=64,
+                    normalized=True)
+        self.todb = torchaudio.transforms.AmplitudeToDB(top_db=80)
+    
+    def forward(self, x):
+        x = self.mel(x)
+        x = self.todb(x)
+        return x
