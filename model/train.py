@@ -1,34 +1,42 @@
-from config import config
-from helpers import dotdict
+from config import config, wandb_key
+from helpers import dotdict, fetch_scheduler
 from models import loss_ce, get_model, loss_bcefocal
 from dataset import get_dataset
 from tqdm import tqdm
 import torch
 import gc
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 from sklearn.metrics import precision_recall_fscore_support
 import wandb
 import argparse
-import numpy as np
 
-def train(model, data_loader, optimizer, scheduler, conf, epoch):
+
+def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoch):
     device = conf.device
     loss_fn = loss_bcefocal if conf.use_secondary else loss_ce
-    model.to(device)
-    model.train()
-    running_loss = 0
 
-    prec= 0
-    rec = 0
-    f1 = 0
+    if train:
+        model.train()
+        prefix = "Train"
+    else:
+        model.eval()
+        prefix = "Valid"
+
+    predictions = torch.tensor([], device=device)
+    targets = torch.tensor([], device=device)
+    running_loss = 0;
+
     loop = tqdm(data_loader, position=0)
 
     for i, (mels, labels) in enumerate(loop):
-        model.zero_grad()
-        mels = mels.to(device)
-        labels = labels.to(device)
+        if train: model.zero_grad()
 
-        outputs = model(mels)
+        mels = mels.to(device=device, non_blocking=True)
+        labels = labels.to(device=device, non_blocking=True)
+
+        with torch.cuda.amp.autocast():
+            outputs = model(mels)
+            loss = loss_fn(outputs, labels)
 
         # calculate sigmoid for multilabel
         if conf.use_secondary:
@@ -36,131 +44,83 @@ def train(model, data_loader, optimizer, scheduler, conf, epoch):
         else:
             _, preds = torch.max(outputs, 1)
 
-        loss = loss_fn(outputs, labels)
-
-        loss.backward()
-        optimizer.step()
-        
-
-        if scheduler is not None:
-            scheduler.step()
+        # do optimizer and scheduler steps
+        if train:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            if scheduler is not None:
+                scheduler.step()
 
         running_loss += loss.item()
-
         if conf.use_secondary:
-            p,r, f, _ = precision_recall_fscore_support(
-                average='micro',
-                y_pred = preds.view(-1).detach().cpu().numpy() > 0.5,
-                y_true=labels.view(-1).detach().cpu().numpy(),
-                zero_division=0)
+            predictions = torch.cat((predictions, preds.view(-1) > 0.5))
+            targets = torch.cat((targets, labels.view(-1)))
         else:
-            p,r, f, _ = precision_recall_fscore_support(
-                average='macro',
-                y_pred = preds.view(-1).detach().cpu().numpy(),
-                y_true=labels.view(-1).detach().cpu().numpy(),
-                zero_division=0)
-        prec += p
-        rec += r
-        f1 += f
+            predictions = torch.cat((predictions, preds.view(-1))).type(torch.int8)
+            targets = torch.cat((targets, labels.view(-1))).type(torch.int8)
 
-        loop.set_description(f"Train Epoch [{epoch + 1}/{conf.epochs}")
-        loop.set_postfix(loss=loss.item(), f1=f, precision=p, recall=r)
+        loop.set_description(f"{prefix} Epoch [{epoch + 1}/{conf.epochs}")
+        loop.set_postfix(loss=loss.item())
+
+    # calculate metrics
+    if conf.use_secondary:
+        pre, rec, f, _ = precision_recall_fscore_support(
+            average='micro',
+            y_pred=predictions.detach().cpu().numpy(),
+            y_true=targets.detach().cpu().numpy(),
+            zero_division=0)
+    else:
+        pre, rec, f, _ = precision_recall_fscore_support(
+            average='micro',
+            y_pred=predictions.detach().cpu().numpy(),
+            y_true=targets.detach().cpu().numpy(),
+            zero_division=0)
 
     lendl = len(data_loader)
     running_loss /= lendl
-    f1 /= lendl
-    prec /= lendl
+    f /= lendl
+    pre /= lendl
     rec /= lendl
 
-    return running_loss, prec, rec, f1
-
-
-def valid(model, data_loader, conf, epoch):
-    model.eval()
-    loss_fn = loss_bcefocal if conf.use_secondary else loss_ce
-    device = conf.device
-    running_loss = 0
-    f1 = 0
-    prec = 0
-    rec = 0
-
-    loop = tqdm(data_loader, position=0)
-    for mels, labels in loop:
-        mels = mels.to(device)
-        labels = labels.to(device)
-
-        outputs = model(mels)
-        # calculate sigmoid for multilabel
-        if conf.use_secondary:
-            preds = torch.sigmoid(outputs)
-        else:
-            _, preds = torch.max(outputs, 1)
-
-        loss = loss_fn(outputs, labels)
-
-        running_loss += loss.item()
-
-        if conf.use_secondary:
-            p,r, f, _ = precision_recall_fscore_support(
-                average='micro',
-                y_pred = preds.view(-1).detach().cpu().numpy() > 0.5,
-                y_true=labels.view(-1).detach().cpu().numpy(),
-                zero_division=0)
-        else:
-            p,r, f, _ = precision_recall_fscore_support(
-                average='macro',
-                y_pred = preds.view(-1).detach().cpu().numpy(),
-                y_true=labels.view(-1).detach().cpu().numpy(),
-                zero_division=0)
-        
-        prec += p
-        rec += r
-        f1 += f
-        loop.set_description(f"Valid Epoch [{epoch + 1}/{conf.epochs}")
-        loop.set_postfix(loss=loss.item(), f1=f, precision=p, recall=r)
-
-    lendl = len(data_loader)
-    running_loss /= lendl
-    f1 /= lendl
-    prec /= lendl
-    rec /= lendl
-
-    return running_loss, prec, rec, f1
+    return running_loss, pre, rec, f
 
 
 def run(data, fold, args):
     train_loader, valid_loader = data
 
-    model = get_model("cnn")
+    model = get_model("cnn").to(config['device'])
     wandb.watch(model)
 
     cfg = dotdict(config)
 
-    optimizer = Adam(model.parameters(), lr=cfg.learning_rate)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=10)
+    optimizer = AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
+    scheduler = fetch_scheduler(optimizer, "OneCycle", spe=len(train_loader), epochs=cfg.epochs)
+    scaler = torch.cuda.amp.GradScaler()
 
     best_valid_f1 = 0
 
     for epoch in range(cfg.epochs):
-        train_loss, train_prec, train_rec, train_f1 = train(model, train_loader, optimizer, scheduler, cfg, epoch)
-        valid_loss, valid_prec, valid_rec, valid_f1 = valid(model, valid_loader, cfg, epoch)
+        loss, prec, rec, f1 = do_epoch(True, model, train_loader, optimizer, scheduler, scaler, cfg, epoch)
+        val_loss, val_prec, val_rec, val_f1 = do_epoch(False, model, train_loader, optimizer, scheduler, scaler, cfg,
+                                                       epoch)
 
         wandb.log({
-            "train_loss": train_loss,
-            "train_f1": train_f1,
-            "train_recall": train_rec,
-            "train_precision": train_prec,
-            "valid_loss": valid_loss,
-            "valid_precision": valid_prec,
-            "valid_recall": valid_rec,
-            "valid_f1": valid_f1
-            })
+            "train_loss": loss,
+            "train_f1": f1,
+            "train_recall": rec,
+            "train_precision": prec,
+            "valid_loss": val_loss,
+            "valid_precision": val_prec,
+            "valid_recall": val_rec,
+            "valid_f1": val_f1
+        })
 
-        if valid_f1 > best_valid_f1:
-            print(f"Validation F1 Improved - {best_valid_f1} ---> {valid_f1}")
+        if val_f1 > best_valid_f1:
+            print(f"Validation F1 Improved - {best_valid_f1} ---> {val_f1}")
             torch.save(model.state_dict(), f'./model_{fold}.bin')
             print(f"Saved model checkpoint at ./model_{fold}.bin")
-            best_valid_f1 = valid_f1
+            best_valid_f1 = val_f1
 
     return best_valid_f1
 
@@ -168,7 +128,8 @@ def run(data, fold, args):
 def main():
     parser = argparse.ArgumentParser(description="Run the training pipeline")
     parser.add_argument("--data_path", type=str, default="../datasets/numpy_mel", help="Location of the metadata csv")
-    parser.add_argument("--data_folder", type=str, default="../datasets/numpy_mel/data", help="Location of the individual bird folders")
+    parser.add_argument("--data_folder", type=str, default="../datasets/numpy_mel/data",
+                        help="Location of the individual bird folders")
     parser.add_argument("--use_secondary", type=bool, default=False, help="Use the secondary label")
     parser.add_argument("--dtype", type=str, default="mel")
     args = parser.parse_args()
@@ -179,6 +140,7 @@ def main():
     # setup wandb
 
     print(config)
+    wandb.login(key=wandb_key)
     wandb.init(
         project="birdclef",
         entity="matvogel",

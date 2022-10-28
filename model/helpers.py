@@ -6,11 +6,12 @@ import numpy as np
 import colorednoise as cn
 import random
 
+
 def flatten_list(l):
     return [item for sublist in l for item in sublist]
 
 
-def fetch_scheduler(optimizer, config):
+def fetch_scheduler(optimizer, sched: str, spe: int, epochs: int):
     """
     It returns a scheduler object based on the string passed in the config file
     
@@ -18,14 +19,17 @@ def fetch_scheduler(optimizer, config):
     :param config: the config file
     :return: The scheduler is being returned.
     """
-    if config.scheduler == 'CosineAnnealingLR':
+    if sched == 'CosineAnnealingLR':
         scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
-    elif config.scheduler == 'CosineAnnealingWarmRestarts':
+    elif sched == 'CosineAnnealingWarmRestarts':
         scheduler = lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1)
-    elif config.scheduler == None:
+    elif sched == 'OneCycle':
+        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, steps_per_epoch=spe, epochs=epochs)
+    elif sched == None:
         return None
-        
+
     return scheduler
+
 
 class BCEFocalLoss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2.0):
@@ -37,10 +41,11 @@ class BCEFocalLoss(nn.Module):
         bce_loss = nn.BCEWithLogitsLoss(reduction='none')(preds, targets)
         probas = torch.sigmoid(preds)
         loss = targets * self.alpha * \
-            (1. - probas)**self.gamma * bce_loss + \
-            (1. - targets) * probas**self.gamma * bce_loss
+               (1. - probas) ** self.gamma * bce_loss + \
+               (1. - targets) * probas ** self.gamma * bce_loss
         loss = loss.mean()
         return loss
+
 
 class dotdict(dict):
     """dot.notation access to dictionary attributes"""
@@ -85,7 +90,7 @@ def add_pink_noise(y, min_snr=5, max_snr=20):
     pink_noise = cn.powerlaw_psd_gaussian(1, len(y))
     a_pink = np.sqrt(pink_noise ** 2).max()
     augmented = (y + pink_noise * 1 / a_pink * a_noise).astype(y.dtype)
-    return augmented  
+    return augmented
 
 
 def add_random_noise(y, max_noise_level=0.5):
@@ -105,8 +110,3 @@ def add_random_noise(y, max_noise_level=0.5):
 def add_noise(y, noise_scale=0.5):
     noise_fn = [add_white_noise, add_pink_noise, add_random_noise]
     return random.choice(noise_fn)(y) * noise_scale
-
-
-
-
-
