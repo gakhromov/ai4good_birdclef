@@ -72,7 +72,7 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
             zero_division=0)
     else:
         pre, rec, f, _ = precision_recall_fscore_support(
-            average='micro',
+            average='macro',
             y_pred=predictions.detach().cpu().numpy(),
             y_true=targets.detach().cpu().numpy(),
             zero_division=0)
@@ -102,7 +102,7 @@ def run(data, fold, args):
 
     for epoch in range(cfg.epochs):
         loss, prec, rec, f1 = do_epoch(True, model, train_loader, optimizer, scheduler, scaler, cfg, epoch)
-        val_loss, val_prec, val_rec, val_f1 = do_epoch(False, model, train_loader, optimizer, scheduler, scaler, cfg,
+        val_loss, val_prec, val_rec, val_f1 = do_epoch(False, model, valid_loader, optimizer, scheduler, scaler, cfg,
                                                        epoch)
 
         wandb.log({
