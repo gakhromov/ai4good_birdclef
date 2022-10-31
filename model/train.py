@@ -77,11 +77,7 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
             y_true=targets.detach().cpu().numpy(),
             zero_division=0)
 
-    lendl = len(data_loader)
-    running_loss /= lendl
-    f /= lendl
-    pre /= lendl
-    rec /= lendl
+    running_loss /= len(data_loader)
 
     return running_loss, pre, rec, f
 

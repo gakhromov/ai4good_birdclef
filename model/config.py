@@ -26,7 +26,7 @@ cnn_conf = {
     'filters': [16, 32, 64, 128, 256],
     'kernels': [(3, 3), (3, 5), (3, 5), (3, 5), (3, 5)],
     'strides': [(2, 2), (2, 2), (1, 3), (1, 3), (1, 3)],
-    'dense': [32, 16, 8],
+    'dense': [256, 256, 256],
     'dropout': True,
     'batch_norm': True,
     'activation': 'relu',

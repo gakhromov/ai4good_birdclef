@@ -1,3 +1,6 @@
+import os
+import random
+
 import pandas as pd
 from config import config, signal_conf
 from sklearn.model_selection import StratifiedGroupKFold
@@ -53,8 +56,8 @@ def get_data(df, fold, args, type="mel", sec=False):
     # if ogg, load the data from ogg files, convert to numpy and extract mel, VERY SLOW
     # if mel, directly load the specs from npz, normalize and return
     if type == "mel":
-        train_dataset = BirdClefMelDataset(args, df=train_df, use_secondary=sec)
-        valid_dataset = BirdClefMelDataset(args, df=valid_df, use_secondary=sec)
+        train_dataset = BirdClefMelDataset(args, df=train_df, use_secondary=sec, noise_p=0.5)
+        valid_dataset = BirdClefMelDataset(args, df=valid_df, use_secondary=sec, noise_p=0)
     else:
         raise ("Wrong Dataset type chosen.")
 
@@ -80,7 +83,6 @@ class BirdClefMelDataset(Dataset):
         self.df = df
         self.df_np = np.load(f'{args.data_path}/augmented.npy', allow_pickle=True)
         self.aug = aug
-        self.mel = MelDB().to(config['device'])
         self.noise_p = noise_p
         self.secondary = False
         self.df_paths = df['path']
@@ -88,15 +90,7 @@ class BirdClefMelDataset(Dataset):
         self.pri_dec = df['primary_label']
         self.sr = signal_conf['sr']
         self.dur = signal_conf['len_segment']
-        self.mel = torchaudio.transforms.MelSpectrogram(
-            sample_rate=22_050,
-            n_fft=1024,
-            f_min=200,
-            f_max=10_000,
-            hop_length=512,
-            n_mels=64,
-            normalized=True)
-        self.atodb = torchaudio.transforms.AmplitudeToDB(top_db=80)
+        self.noise_files = [f'{args.data_path}/noise/{f}' for f in os.listdir(f'{args.data_path}/noise')]
 
     def __len__(self):
         return len(self.df)
@@ -105,20 +99,25 @@ class BirdClefMelDataset(Dataset):
         # extract the item chosen
         fpath = pathlib.Path(pathlib.PurePosixPath(self.df_paths[index]))
         specs = np.load(fpath, allow_pickle=True)
-
         mel_normal = torch.FloatTensor(specs.f.mel)
-        # do noise injection with probablitiy noise_p
-        if self.noise_p > 0:
-            if np.random.random() < self.noise_p:
-                noise = torch.FloatTensor(add_noise(np.zeros(self.sr * self.dur), noise_scale=0.5))
-                mel_normal += self.atodb(self.mel(noise))
+        normalize_0_1(mel_normal)
 
-        # normalize layers
-        mel_normal = mel_normal - mel_normal.min()
-        if mel_normal.max() != 0:
-            mel_normal /= mel_normal.max()
+        # do noise injection with probablitiy noise_p
+        if self.noise_p > 0 and np.random.random() < self.noise_p:
+            noise_path = random.choice(self.noise_files)
+            spec_noise = np.load(noise_path, allow_pickle=True)
+            spec_noise = spec_noise.f.mel
+
+            mel_noise = torch.FloatTensor(spec_noise)
+            # normalize and scale
+            normalize_0_1(mel_noise)
+            mel_noise *= torch.distributions.uniform.Uniform(0.2,0.8).sample([1])
+            mel_normal += mel_noise
+            normalize_0_1(mel_normal)
+
 
         # stack layers (will come later)
+
         image = mel_normal.unsqueeze(0)
 
         if self.secondary:
@@ -128,3 +127,9 @@ class BirdClefMelDataset(Dataset):
             label = torch.tensor(self.pri_enc[index]).type(torch.LongTensor)
 
         return image, label
+
+def normalize_0_1(tensor):
+    tensor = tensor - tensor.min()
+    if tensor.max() != 0:
+        tensor /= tensor.max()
+    return tensor
