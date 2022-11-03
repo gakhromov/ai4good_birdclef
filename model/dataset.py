@@ -49,7 +49,7 @@ def get_dataset(args):
     return folded_ds
 
 
-def get_data(df, fold, args, type="mel", sec=False):
+def get_data(df, fold, args, type="mel", sec=True):
     # extract fold
     train_df = df[df['fold'] != fold].reset_index(drop=True)
     valid_df = df[df['fold'] == fold].reset_index(drop=True)
@@ -64,14 +64,14 @@ def get_data(df, fold, args, type="mel", sec=False):
     train_loader = DataLoader(train_dataset,
                               batch_size=config['train_batch_size'],
                               num_workers=4,
-                              #prefetch_factor=4,
+                              # prefetch_factor=4,
                               pin_memory=True,
                               shuffle=True)
 
     valid_loader = DataLoader(valid_dataset,
                               batch_size=config['valid_batch_size'],
                               num_workers=4,
-                              #prefetch_factor=4,
+                              # prefetch_factor=4,
                               pin_memory=True,
                               shuffle=True)
 
@@ -79,15 +79,15 @@ def get_data(df, fold, args, type="mel", sec=False):
 
 
 class BirdClefMelDataset(Dataset):
-    def __init__(self, args, df, aug=None, noise_p=0.2, use_secondary=False):
+    def __init__(self, args, df, aug=None, noise_p=0.2, use_secondary=True):
         self.df = df
-        self.df_np = np.load(f'{args.data_path}/augmented.npy', allow_pickle=True)
         self.aug = aug
         self.noise_p = noise_p
-        self.secondary = False
+        self.secondary = use_secondary
         self.df_paths = df['path']
         self.pri_enc = df['pri_enc']
         self.pri_dec = df['primary_label']
+        self.sec_enc = str_array_to_array(df.loc[:, 'sec_enc'])
         self.sr = signal_conf['sr']
         self.dur = signal_conf['len_segment']
         self.noise_files = [f'{args.data_path}/noise/{f}' for f in os.listdir(f'{args.data_path}/noise')]
@@ -99,8 +99,7 @@ class BirdClefMelDataset(Dataset):
         # extract the item chosen
         fpath = pathlib.Path(pathlib.PurePosixPath(self.df_paths[index]))
         specs = np.load(fpath, allow_pickle=True)
-        mel_normal = torch.FloatTensor(specs.f.mel)
-        normalize_0_1(mel_normal)
+        mel_normal = normalize_0_1(torch.FloatTensor(specs.f.mel))
 
         # do noise injection with probablitiy noise_p
         if self.noise_p > 0 and np.random.random() < self.noise_p:
@@ -108,28 +107,34 @@ class BirdClefMelDataset(Dataset):
             spec_noise = np.load(noise_path, allow_pickle=True)
             spec_noise = spec_noise.f.mel
 
-            mel_noise = torch.FloatTensor(spec_noise)
-            # normalize and scale
-            normalize_0_1(mel_noise)
-            mel_noise *= torch.distributions.uniform.Uniform(0.2,0.8).sample([1])
+            mel_noise = normalize_0_1(torch.FloatTensor(spec_noise))
+            mel_noise *= torch.distributions.uniform.Uniform(0.01, 0.5).sample([1])
             mel_normal += mel_noise
-            normalize_0_1(mel_normal)
-
+            mel_normal = normalize_0_1(mel_normal)
 
         # stack layers (will come later)
 
         image = mel_normal.unsqueeze(0)
 
         if self.secondary:
-            l = self.df_np[index][4]
-            label = torch.tensor(l).type(torch.FloatTensor)
+            label = torch.tensor(self.sec_enc[index]).type(torch.FloatTensor)
         else:
             label = torch.tensor(self.pri_enc[index]).type(torch.LongTensor)
 
         return image, label
+
 
 def normalize_0_1(tensor):
     tensor = tensor - tensor.min()
     if tensor.max() != 0:
         tensor /= tensor.max()
     return tensor
+
+
+def str_array_to_array(str_arr):
+    array = []
+    for row in str_arr:
+        r = row.replace(']', '').replace('[', '')
+        r = [int(x) for x in r.split()]
+        array.append(r)
+    return np.array(array)

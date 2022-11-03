@@ -15,11 +15,6 @@ config = {
     "data_path": 'datasets/birdclef22',
     "mel_path": 'data_processing/numpy_mel',
     "use_secondary": False,
-    "sample_rate": 22_050,
-    "n_fft": 1024,
-    "hop_length": 512,
-    "n_mels": 64,
-    "duration": 30,
 }
 
 cnn_conf = {
@@ -44,4 +39,4 @@ signal_conf = {
     "lseg_samples": 30 * 22_050
 }
 
-wandb_key="13be45bcff4cb1b250c86080f4b3e7ca5cfd29c2"
+wandb_key="None"
