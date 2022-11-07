@@ -146,8 +146,8 @@ def main():
     print(config)
     wandb.login(key=wandb_key)
     wandb.init(
-        project="birdclef",
-        entity="matvogel",
+        project="ai4good",
+        entity="lessgoo",
         config=config)
 
     # get dataset
