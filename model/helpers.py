@@ -1,4 +1,3 @@
-import torch
 from torch.optim import lr_scheduler
 import torch
 from torch import nn
@@ -24,7 +23,7 @@ def fetch_scheduler(optimizer, sched: str, spe: int, epochs: int):
     elif sched == 'CosineAnnealingWarmRestarts':
         scheduler = lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1)
     elif sched == 'OneCycle':
-        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, steps_per_epoch=spe, epochs=epochs)
+        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=1e-3, steps_per_epoch=spe, epochs=epochs)
     elif sched == None:
         return None
 
@@ -47,7 +46,7 @@ class BCEFocalLoss(nn.Module):
         return loss
 
 
-class dotdict(dict):
+class DotDict(dict):
     """dot.notation access to dictionary attributes"""
     __getattr__ = dict.get
     __setattr__ = dict.__setitem__

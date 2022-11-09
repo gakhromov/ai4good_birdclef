@@ -1,6 +1,6 @@
 from config import config, wandb_key
-from helpers import dotdict, fetch_scheduler
-from models import loss_ce, get_model, loss_bcefocal
+from helpers import DotDict, fetch_scheduler
+from models import loss_ce, get_model, loss_bcefocal, loss_bce
 from dataset import get_dataset
 from tqdm import tqdm
 import torch
@@ -9,6 +9,7 @@ from torch.optim import Adam, AdamW
 from sklearn.metrics import precision_recall_fscore_support
 import wandb
 import argparse
+from contextlib import nullcontext
 
 
 def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoch):
@@ -18,55 +19,62 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
     if train:
         model.train()
         prefix = "Train"
+        context = nullcontext()
     else:
         model.eval()
         prefix = "Valid"
+        context = torch.no_grad()
 
     predictions = torch.tensor([], device=device)
     targets = torch.tensor([], device=device)
     running_loss = 0;
 
     loop = tqdm(data_loader, position=0)
+    with context:
+        for i, (mels, labels) in enumerate(loop):
+            if train: model.zero_grad()
 
-    for i, (mels, labels) in enumerate(loop):
-        if train: model.zero_grad()
+            mels = mels.to(device=device, non_blocking=True)
+            labels = labels.to(device=device, non_blocking=True)
 
-        mels = mels.to(device=device, non_blocking=True)
-        labels = labels.to(device=device, non_blocking=True)
+            with torch.cuda.amp.autocast():
+                outputs = model(mels)
+                loss = loss_fn(outputs, labels)
 
-        with torch.cuda.amp.autocast():
-            outputs = model(mels)
-            loss = loss_fn(outputs, labels)
+            # calculate sigmoid for multilabel
+            if conf.use_secondary:
+                preds = torch.sigmoid(outputs)
+            else:
+                _, preds = torch.max(outputs, 1)
 
-        # calculate sigmoid for multilabel
-        if conf.use_secondary:
-            preds = torch.sigmoid(outputs)
-        else:
-            _, preds = torch.max(outputs, 1)
+            # do optimizer and scheduler steps
+            if train:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+                if scheduler is not None:
+                    scheduler.step()
 
-        # do optimizer and scheduler steps
-        if train:
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            if scheduler is not None:
-                scheduler.step()
+            running_loss += loss.item()
 
-        running_loss += loss.item()
-        if conf.use_secondary:
-            predictions = torch.cat((predictions, preds.view(-1) > 0.5))
-            targets = torch.cat((targets, labels.view(-1)))
-        else:
-            predictions = torch.cat((predictions, preds.view(-1))).type(torch.int8)
-            targets = torch.cat((targets, labels.view(-1))).type(torch.int8)
+            if conf.use_secondary:
+                predictions = torch.cat((predictions, preds.view(-1) > 0.5), dim=0)
+                targets = torch.cat((targets, labels.view(-1)), dim=0)
+            else:
+                predictions = torch.cat((predictions, preds.view(-1)), dim=0)
+                targets = torch.cat((targets, labels.view(-1)), dim=0)
 
-        loop.set_description(f"{prefix} Epoch [{epoch + 1}/{conf.epochs}")
-        loop.set_postfix(loss=loss.item())
+            loop.set_description(f"{prefix} Epoch [{epoch + 1}/{conf.epochs}")
+            loop.set_postfix(loss=loss.item())
+
+        # test last output
+        #test_pred = torch.tensor(torch.sigmoid(model(mels)[0]) > 0.5).type(torch.int8)
+        #print(test_pred, labels[0], sep='\n\n')
 
     # calculate metrics
     if conf.use_secondary:
         pre, rec, f, _ = precision_recall_fscore_support(
-            average='micro',
+            average='macro',
             y_pred=predictions.detach().cpu().numpy(),
             y_true=targets.detach().cpu().numpy(),
             zero_division=0)
@@ -88,7 +96,7 @@ def run(data, fold, args):
     model = get_model("cnn").to(config['device'])
     wandb.watch(model)
 
-    cfg = dotdict(config)
+    cfg = DotDict(config)
 
     optimizer = AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
     scheduler = fetch_scheduler(optimizer, "OneCycle", spe=len(train_loader), epochs=cfg.epochs)
@@ -126,20 +134,20 @@ def main():
     parser.add_argument("--data_path", type=str, default="../datasets/numpy_mel", help="Location of the metadata csv")
     parser.add_argument("--data_folder", type=str, default="../datasets/numpy_mel/data",
                         help="Location of the individual bird folders")
-    parser.add_argument("--use_secondary", type=bool, default=False, help="Use the secondary label")
     parser.add_argument("--dtype", type=str, default="mel")
     args = parser.parse_args()
     print("Running training with following args: \n", args)
+
     # enable benchmark mode for more power
     torch.backends.cudnn.benchmark = True
 
     # setup wandb
-
+    args.use_secondary = config['use_secondary']
     print(config)
     wandb.login(key=wandb_key)
     wandb.init(
-        project="birdclef",
-        entity="matvogel",
+        project="ai4good",
+        entity="lessgoo",
         config=config)
 
     # get dataset

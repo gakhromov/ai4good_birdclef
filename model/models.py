@@ -4,6 +4,7 @@ from config import config, cnn_conf
 import torch
 import torchaudio
 
+
 class DummyModel(nn.Module):
     def __init__(self):
         super(DummyModel, self).__init__()
@@ -36,22 +37,48 @@ class BCEFocalLoss(nn.Module):
         self.gamma = gamma
 
     def forward(self, preds, targets):
-        targets = targets.float()
         bce_loss = nn.BCEWithLogitsLoss(reduction='none')(preds, targets)
         probas = torch.sigmoid(preds)
         loss = targets * self.alpha * \
-            (1. - probas)**self.gamma * bce_loss + \
-            (1. - targets) * probas**self.gamma * bce_loss
+               (1. - probas) ** self.gamma * bce_loss + \
+               (1. - targets) * probas ** self.gamma * bce_loss
         loss = loss.mean()
         return loss
+
+
+class FocalLoss(nn.Module):
+    def __init__(self, weight=None, size_average=True):
+        super(FocalLoss, self).__init__()
+        self.alpha = 0.8
+        self.gamma = 2
+
+    def forward(self, inputs, targets, smooth=1):
+        # flatten label and prediction tensors
+        inputs = inputs.view(-1)
+        targets = targets.view(-1)
+
+        # first compute binary cross-entropy
+        BCE = F.binary_cross_entropy_with_logits(inputs, targets, reduction='mean')
+        BCE_EXP = torch.exp(-BCE)
+        focal_loss = self.alpha * (1 - BCE_EXP) ** self.gamma * BCE
+
+        return focal_loss
 
 
 def loss_ce(outputs, labels):
     return nn.CrossEntropyLoss()(outputs, labels)
 
+
+def loss_bce(logits, targets):
+    return nn.BCEWithLogitsLoss()(logits, targets)
+
+
 def loss_bcefocal(logits, targets):
-    bcef = BCEFocalLoss()
-    loss = bcef(logits, targets)
+    focal_loss = FocalLoss()
+
+    bce = loss_bce(logits, targets)
+    focal = focal_loss(logits, targets)
+    loss = bce + focal
     return loss
 
 
@@ -63,14 +90,14 @@ class CNNModel(nn.Module):
         assert len(filts) == len(kerns) and len(strds) == len(kerns)
 
         # setup the encoders
-        self.enc0 = ConvBnPool(in_dim,   filts[0], kerns[0], strid=strds[0], pad=(0,0))
-        self.enc1 = ConvBnPool(filts[0], filts[1], kerns[1], strid=strds[1], pad=(0,0))
-        self.enc2 = ConvBnPool(filts[1], filts[2], kerns[2], strid=strds[2], pad=(0,0))
-        self.enc3 = ConvBnPool(filts[2], filts[3], kerns[3], strid=strds[3], pad=(0,0))
-        self.enc4 = ConvBnPool(filts[3], filts[4], kerns[4], strid=strds[4], pad=(0,0))
+        self.enc0 = ConvBnPool(in_dim,   filts[0], kerns[0], strid=strds[0], pad=(0, 0))
+        self.enc1 = ConvBnPool(filts[0], filts[1], kerns[1], strid=strds[1], pad=(0, 0))
+        self.enc2 = ConvBnPool(filts[1], filts[2], kerns[2], strid=strds[2], pad=(0, 0))
+        self.enc3 = ConvBnPool(filts[2], filts[3], kerns[3], strid=strds[3], pad=(0, 0))
+        self.enc4 = ConvBnPool(filts[3], filts[4], kerns[4], strid=strds[4], pad=(0, 0))
 
         # global average pooling
-        self.gap = nn.AvgPool2d(kernel_size=(9,7))
+        self.gap = nn.AvgPool2d(kernel_size=(9, 7))
         self.flat = nn.Flatten()
 
         # dropout
@@ -84,7 +111,7 @@ class CNNModel(nn.Module):
         # final layers
         self.final = nn.Linear(in_features=dense[2], out_features=config['n_classes'])
 
-    def forward(self,x):
+    def forward(self, x):
         # encode
         x = self.enc0(x)
         x = self.enc1(x)
@@ -101,10 +128,12 @@ class CNNModel(nn.Module):
         x = self.d2(x)
         x = self.drop(x)
         x = self.d3(x)
+        x = self.drop(x)
 
         x = self.final(x)
 
         return x
+
 
 class ConvBnPool(nn.Module):
     def __init__(self, in_dim, out_dim, kern, strid, pad=None, activation="relu"):
@@ -120,7 +149,7 @@ class ConvBnPool(nn.Module):
         x = self.activ(x)
         x = self.pool(x)
         return x
-        
+
 
 def get_model(model="basic", in_dim=1):
     if model == "basic":
@@ -131,17 +160,17 @@ def get_model(model="basic", in_dim=1):
 
 class MelDB(nn.Module):
     def __init__(self):
-        super().__init__()   
+        super().__init__()
         self.mel = torchaudio.transforms.MelSpectrogram(
-                    sample_rate=22_050,
-                    n_fft=1024,
-                    f_min=200,
-                    f_max=10_000,
-                    hop_length=512,
-                    n_mels=64,
-                    normalized=True)
+            sample_rate=22_050,
+            n_fft=1024,
+            f_min=200,
+            f_max=10_000,
+            hop_length=512,
+            n_mels=64,
+            normalized=True)
         self.todb = torchaudio.transforms.AmplitudeToDB(top_db=80)
-    
+
     def forward(self, x):
         x = self.mel(x)
         x = self.todb(x)
