@@ -1,11 +1,11 @@
 config = {
     # TRAIN SETTINGS
-    "epochs": 25,
+    "epochs": 50,
     "n_classes": 152,
-    "n_folds": 3,
+    "n_folds": 2,
     "num_classes": 152,
-    "train_batch_size": 32,
-    "valid_batch_size": 32,
+    "train_batch_size": 16,
+    "valid_batch_size": 64,
     "learning_rate": 1e-4,
     "device": 'cuda',
     "scheduler": 'OneCycle',
@@ -29,14 +29,13 @@ cnn_conf = {
 }
 
 signal_conf = {
-    "sr": 22050,
+    "sr": 32_000,
     "fmin": 200,
     "fmax": 10000,
-    "nmels": 64,
+    "nmels": 128,
     "nfft": 1024,
-    "sr": 22_050,
     "len_segment": 30,
-    "lseg_samples": 30 * 22_050
+    "hop_length": 512
 }
 
-wandb_key="None"
+wandb_key="13be45bcff4cb1b250c86080f4b3e7ca5cfd29c2"

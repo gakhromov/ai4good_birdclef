@@ -1,16 +1,11 @@
 import os
-import random
-
 import pandas as pd
 from config import config, signal_conf
 from sklearn.model_selection import StratifiedGroupKFold
 from torch.utils.data import Dataset, DataLoader
-import torch
-import numpy as np
 import pathlib
 from helpers import *
-import torch, torchaudio
-from models import MelDB
+import torch
 
 
 def combine_labels(prim, sec):
@@ -56,8 +51,8 @@ def get_data(df, fold, args, type="mel", sec=True):
     # if ogg, load the data from ogg files, convert to numpy and extract mel, VERY SLOW
     # if mel, directly load the specs from npz, normalize and return
     if type == "mel":
-        train_dataset = BirdClefMelDataset(args, df=train_df, use_secondary=sec, noise_p=0.5)
-        valid_dataset = BirdClefMelDataset(args, df=valid_df, use_secondary=sec, noise_p=0)
+        train_dataset = BirdClefMelDataset(train=True, args=args, df=train_df, use_secondary=sec, noise_p=0.5)
+        valid_dataset = BirdClefMelDataset(train=False, args=args, df=valid_df, use_secondary=sec)
     else:
         raise ("Wrong Dataset type chosen.")
 
@@ -79,7 +74,15 @@ def get_data(df, fold, args, type="mel", sec=True):
 
 
 class BirdClefMelDataset(Dataset):
-    def __init__(self, args, df, aug=None, noise_p=0.2, use_secondary=True):
+    def __init__(self,
+                 train: bool,
+                 args,
+                 df,
+                 aug=None,
+                 noise_p=0.2,
+                 use_secondary=True
+                 ):
+        self.train = train
         self.df = df
         self.aug = aug
         self.noise_p = noise_p
@@ -89,7 +92,9 @@ class BirdClefMelDataset(Dataset):
         self.pri_dec = df['primary_label']
         self.sec_enc = str_array_to_array(df.loc[:, 'sec_enc'])
         self.sr = signal_conf['sr']
+        self.hl = signal_conf['hop_length']
         self.dur = signal_conf['len_segment']
+        self.dur_samps = int(self.dur * self.sr / self.hl + 1)
         self.noise_files = [f'{args.data_path}/noise/{f}' for f in os.listdir(f'{args.data_path}/noise')]
 
     def __len__(self):
@@ -99,7 +104,22 @@ class BirdClefMelDataset(Dataset):
         # extract the item chosen
         fpath = pathlib.Path(pathlib.PurePosixPath(self.df_paths[index]))
         specs = np.load(fpath, allow_pickle=True)
-        mel_normal = normalize_0_1(torch.FloatTensor(specs.f.mel))
+        mel = specs.f.mel
+
+        # take a random 30-second chunk
+        # pad with zeros if the audio is less than the length
+        if mel.shape[1] - self.dur_samps <= 0:
+            mel = normalize_0_1(mel)
+            pad = np.zeros((mel.shape[0], self.dur_samps - mel.shape[1]))
+            mel = np.column_stack((mel, pad))
+        # crop a random clip of chosen segment length
+        else:
+            start = np.random.randint(0, mel.shape[1] - self.dur_samps)
+            mel = mel[:, start:start+self.dur_samps]
+            mel = normalize_0_1(mel)
+
+        # convert to torch tensor
+        mel_normal = torch.FloatTensor(mel)
 
         # do noise injection with probablitiy noise_p
         if self.noise_p > 0 and np.random.random() < self.noise_p:
@@ -112,10 +132,9 @@ class BirdClefMelDataset(Dataset):
             mel_normal += mel_noise
             mel_normal = normalize_0_1(mel_normal)
 
-        # stack layers (will come later)
-
+        # add dimensionality layer
         image = mel_normal.unsqueeze(0)
-
+        # load the labels
         if self.secondary:
             label = torch.tensor(self.sec_enc[index]).type(torch.FloatTensor)
         else:

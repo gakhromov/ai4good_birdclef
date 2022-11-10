@@ -104,7 +104,7 @@ class CNNModel(nn.Module):
         self.drop = nn.Dropout(p=0.2)
 
         # dense layers
-        self.d1 = nn.Linear(in_features=filts[-1], out_features=dense[0])
+        self.d1 = nn.Linear(in_features=filts[-1]*4, out_features=dense[0])
         self.d2 = nn.Linear(in_features=dense[0], out_features=dense[1])
         self.d3 = nn.Linear(in_features=dense[1], out_features=dense[2])
 
