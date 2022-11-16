@@ -38,7 +38,14 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
             labels = labels.to(device=device, non_blocking=True)
 
             with torch.cuda.amp.autocast():
-                outputs = model(mels)
+                # iterate through each split, take the mean of the outputs
+                outputs = []
+                for split in range(mels.shape[1]):
+                    if outputs is None:
+                        outputs = model(mels[:, split, :, :])
+                    else:
+                        outputs += model(mels[:, split, :, :])
+                outputs = outputs / mels.shape[1]
                 loss = loss_fn(outputs, labels)
 
             # calculate sigmoid for multilabel
