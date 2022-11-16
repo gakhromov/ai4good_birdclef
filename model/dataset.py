@@ -94,7 +94,8 @@ class BirdClefMelDataset(Dataset):
         self.sr = signal_conf['sr']
         self.hl = signal_conf['hop_length']
         self.dur = signal_conf['len_segment']
-        self.dur_samps = int(self.dur * self.sr / self.hl + 1)
+        self.dur_samps = int(self.dur * self.sr / self.hl + 1)  # 30 seconds by default
+        self.dur_window = self.dur_samps // 2                   # 15 seconds by default
         self.noise_files = [f'{args.data_path}/noise/{f}' for f in os.listdir(f'{args.data_path}/noise')]
 
     def __len__(self):
@@ -105,21 +106,30 @@ class BirdClefMelDataset(Dataset):
         fpath = pathlib.Path(pathlib.PurePosixPath(self.df_paths[index]))
         specs = np.load(fpath, allow_pickle=True)
         mel = specs.f.mel
+        mel = normalize_0_1(mel)
 
-        # take a random 30-second chunk
-        # pad with zeros if the audio is less than the length
-        if mel.shape[1] - self.dur_samps <= 0:
-            mel = normalize_0_1(mel)
-            pad = np.zeros((mel.shape[0], self.dur_samps - mel.shape[1]))
+        # pad with zeros if the audio is not of the length 'dur_samps + k * dur_window, k>=0'
+        if (mel.shape[1] - self.dur_samps) % self.dur_window != 0:
+            if mel.shape[1] < self.dur_samps:
+                to_pad = self.dur_samps - mel.shape[1] # pad to len = dur_samps
+            else:
+                residual_time = (mel.shape[1] - self.dur_samps) % self.dur_window
+                to_pad = self.dur_window - residual_time # pad to len = dur_samps + k * dur_window
+
+            pad = np.zeros((mel.shape[0], to_pad))
             mel = np.column_stack((mel, pad))
-        # crop a random clip of chosen segment length
-        else:
-            start = np.random.randint(0, mel.shape[1] - self.dur_samps)
-            mel = mel[:, start:start+self.dur_samps]
-            mel = normalize_0_1(mel)
+
+        # take 'dur_samps' chunks with 'dur_window' window
+        num_chunks = (mel.shape[1] - self.dur_samps) // self.dur_window + 1
+        mels = []
+        for chunk in range(num_chunks):
+            start = chunk*self.dur_window
+            mel_chunk = mel[:, start:start+self.dur_samps]
+            mels.append(mel_chunk)
 
         # convert to torch tensor
-        mel_normal = torch.FloatTensor(mel)
+        mels = np.array(mels)
+        mel_normal = torch.FloatTensor(mels)
 
         # do noise injection with probablitiy noise_p
         if self.noise_p > 0 and np.random.random() < self.noise_p:
@@ -129,7 +139,8 @@ class BirdClefMelDataset(Dataset):
 
             mel_noise = normalize_0_1(torch.FloatTensor(spec_noise))
             mel_noise *= torch.distributions.uniform.Uniform(0.01, 0.5).sample([1])
-            mel_normal += mel_noise
+            for split in range(mel_normal.shape[0]):
+                mel_normal[split, :, :] += mel_noise[:, :self.dur_samps]
             mel_normal = normalize_0_1(mel_normal)
 
         # add dimensionality layer
