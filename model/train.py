@@ -33,19 +33,15 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
     with context:
         for i, (mels, labels) in enumerate(loop):
             if train: model.zero_grad()
-
-            mels = mels.to(device=device, non_blocking=True)
+            n_batches= mels.shape[1]
+            mels = mels.to(device=device, non_blocking=True) # find the origin of the additional dimesnion
             labels = labels.to(device=device, non_blocking=True)
+            #shape is 1 num of slices height width
 
             with torch.cuda.amp.autocast():
-                # iterate through each split, take the mean of the outputs
-                outputs = []
-                for split in range(mels.shape[1]):
-                    if outputs is None:
-                        outputs = model(mels[:, split, :, :])
-                    else:
-                        outputs += model(mels[:, split, :, :])
-                outputs = outputs / mels.shape[1]
+                outputs = model(mels.swapaxes(0,1)) # swap the channel and batch axis so we have batch size, 1, height, width
+
+                outputs = torch.mean(outputs, dim=0).unsqueeze(0) # add back the channel dimesnion
                 loss = loss_fn(outputs, labels)
 
             # calculate sigmoid for multilabel

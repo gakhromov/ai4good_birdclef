@@ -144,7 +144,7 @@ class BirdClefMelDataset(Dataset):
             mel_normal = normalize_0_1(mel_normal)
 
         # add dimensionality layer
-        image = mel_normal.unsqueeze(0)
+        image = mel_normal
         # load the labels
         if self.secondary:
             label = torch.tensor(self.sec_enc[index]).type(torch.FloatTensor)
