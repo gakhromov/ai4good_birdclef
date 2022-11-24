@@ -103,19 +103,19 @@ class BirdClefMelDataset(Dataset):
 
     def __getitem__(self, index):
         # extract the item chosen
-        fpath = pathlib.Path(pathlib.PurePosixPath(self.df_paths[index]))
+        fpath = pathlib.Path(pathlib.PurePosixPath(self.df_paths[index])).resolve()
         specs = np.load(fpath, allow_pickle=True)
         mel = specs.f.mel
         mel = normalize_0_1(mel)
 
         # pad with zeros if the audio is not of the length 'dur_samps + k * dur_window, k>=0'
-        if (mel.shape[1] - self.dur_samps) % self.dur_window != 0:
-            if mel.shape[1] < self.dur_samps:
-                to_pad = self.dur_samps - mel.shape[1] # pad to len = dur_samps
-            else:
-                residual_time = (mel.shape[1] - self.dur_samps) % self.dur_window
-                to_pad = self.dur_window - residual_time # pad to len = dur_samps + k * dur_window
-
+        if mel.shape[1] < self.dur_samps:
+            to_pad = self.dur_samps - mel.shape[1] # pad to len = dur_samps
+            pad = np.zeros((mel.shape[0], to_pad))
+            mel = np.column_stack((mel, pad))
+        elif (mel.shape[1] - self.dur_samps) % self.dur_window != 0:
+            residual_time = (mel.shape[1] - self.dur_samps) % self.dur_window
+            to_pad = self.dur_window - residual_time # pad to len = dur_samps + k * dur_window
             pad = np.zeros((mel.shape[0], to_pad))
             mel = np.column_stack((mel, pad))
 
@@ -128,30 +128,31 @@ class BirdClefMelDataset(Dataset):
             mels.append(mel_chunk)
 
         # convert to torch tensor
-        mels = np.array(mels)
-        mel_normal = torch.FloatTensor(mels)
+        mel_normal = torch.FloatTensor(np.array(mels))
 
         # do noise injection with probablitiy noise_p
         if self.noise_p > 0 and np.random.random() < self.noise_p:
             noise_path = random.choice(self.noise_files)
             spec_noise = np.load(noise_path, allow_pickle=True)
             spec_noise = spec_noise.f.mel
-
             mel_noise = normalize_0_1(torch.FloatTensor(spec_noise))
             mel_noise *= torch.distributions.uniform.Uniform(0.01, 0.5).sample([1])
+
+            # add noise to the splits
             for split in range(mel_normal.shape[0]):
                 mel_normal[split, :, :] += mel_noise[:, :self.dur_samps]
             mel_normal = normalize_0_1(mel_normal)
 
-        # add dimensionality layer
-        image = mel_normal
         # load the labels
         if self.secondary:
             label = torch.tensor(self.sec_enc[index]).type(torch.FloatTensor)
         else:
             label = torch.tensor(self.pri_enc[index]).type(torch.LongTensor)
-
-        return image, label
+        
+        data = {}
+        data['mels'] = mel_normal
+        data['path'] = str(fpath)
+        return data, label
 
 
 def normalize_0_1(tensor):

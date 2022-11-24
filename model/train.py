@@ -31,17 +31,25 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
 
     loop = tqdm(data_loader, position=0)
     with context:
-        for i, (mels, labels) in enumerate(loop):
+        for i, (data, labels) in enumerate(loop):
             if train: model.zero_grad()
-            n_batches= mels.shape[1]
-            mels = mels.to(device=device, non_blocking=True) # find the origin of the additional dimesnion
+            mels = data['mels']
+            # swap so we have B 1 H W
+            mels = torch.swapaxes(mels,0,1)
+            # create slices
+            slices = mels.split(8)
+            # handle the labels and create an empty tensor for the output stacking
             labels = labels.to(device=device, non_blocking=True)
+            outputs = torch.tensor([], device=device)
+
             #shape is 1 num of slices height width
-
             with torch.cuda.amp.autocast():
-                outputs = model(mels.swapaxes(0,1)) # swap the channel and batch axis so we have batch size, 1, height, width
-
-                outputs = torch.mean(outputs, dim=0).unsqueeze(0) # add back the channel dimesnion
+                for s in slices:
+                    s = s.to(device=device, non_blocking=True)
+                    pred = model(s)
+                    outputs = torch.cat((outputs, pred), dim=0)
+                
+                outputs = torch.mean(outputs, dim=0, keepdim=True)# add back the channel dimesnion
                 loss = loss_fn(outputs, labels)
 
             # calculate sigmoid for multilabel
