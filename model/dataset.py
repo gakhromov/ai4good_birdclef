@@ -131,7 +131,7 @@ class BirdClefMelDataset(Dataset):
         mel_normal = torch.FloatTensor(np.array(mels))
 
         # do noise injection with probablitiy noise_p
-        if self.noise_p > 0 and np.random.random() < self.noise_p:
+        if self.train and np.random.random() < self.noise_p:
             noise_path = random.choice(self.noise_files)
             spec_noise = np.load(noise_path, allow_pickle=True)
             spec_noise = spec_noise.f.mel
