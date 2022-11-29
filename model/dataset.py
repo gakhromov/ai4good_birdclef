@@ -55,16 +55,16 @@ def get_data(df, fold, args, type="mel", sec=True):
         valid_dataset = BirdClefMelDataset(train=False, args=args, df=valid_df, use_secondary=sec)
     else:
         raise ("Wrong Dataset type chosen.")
-
+    bs = 1 if config['use_slices'] else config['train_batch_size']
     train_loader = DataLoader(train_dataset,
-                              batch_size=config['train_batch_size'],
+                              batch_size=bs,
                               num_workers=4,
                               # prefetch_factor=4,
                               pin_memory=True,
                               shuffle=True)
 
     valid_loader = DataLoader(valid_dataset,
-                              batch_size=config['valid_batch_size'],
+                              batch_size=bs,
                               num_workers=4,
                               # prefetch_factor=4,
                               pin_memory=True,
@@ -97,6 +97,7 @@ class BirdClefMelDataset(Dataset):
         self.dur_samps = int(self.dur * self.sr / self.hl + 1)  # 30 seconds by default
         self.dur_window = self.dur_samps // 2                   # 15 seconds by default
         self.noise_files = [f'{args.data_path}/noise/{f}' for f in os.listdir(f'{args.data_path}/noise')]
+        self.slicing = config['use_slices']
 
     def __len__(self):
         return len(self.df)
@@ -113,22 +114,29 @@ class BirdClefMelDataset(Dataset):
             to_pad = self.dur_samps - mel.shape[1] # pad to len = dur_samps
             pad = np.zeros((mel.shape[0], to_pad))
             mel = np.column_stack((mel, pad))
-        elif (mel.shape[1] - self.dur_samps) % self.dur_window != 0:
+        elif (mel.shape[1] - self.dur_samps) % self.dur_window != 0 and self.slicing:
             residual_time = (mel.shape[1] - self.dur_samps) % self.dur_window
             to_pad = self.dur_window - residual_time # pad to len = dur_samps + k * dur_window
             pad = np.zeros((mel.shape[0], to_pad))
             mel = np.column_stack((mel, pad))
 
-        # take 'dur_samps' chunks with 'dur_window' window
-        num_chunks = (mel.shape[1] - self.dur_samps) // self.dur_window + 1
-        mels = []
-        for chunk in range(num_chunks):
-            start = chunk*self.dur_window
-            mel_chunk = mel[:, start:start+self.dur_samps]
-            mels.append(mel_chunk)
-
-        # convert to torch tensor
-        mel_normal = torch.FloatTensor(np.array(mels))
+        if self.slicing:
+            # take 'dur_samps' chunks with 'dur_window' window
+            num_chunks = (mel.shape[1] - self.dur_samps) // self.dur_window + 1
+            mels = []
+            for chunk in range(num_chunks):
+                start = chunk*self.dur_window
+                mel_chunk = mel[:, start:start+self.dur_samps]
+                mels.append(mel_chunk)
+            # convert to torch tensor
+            mel_normal = torch.FloatTensor(np.array(mels))
+        else:
+            # pick random 30 second chunk
+            if mel.shape[1] == self.dur_samps:
+                start = 0
+            else:
+                start = np.random.randint(0,mel.shape[1] - self.dur_samps)
+            mel_normal = torch.FloatTensor(mel[:,start:start+self.dur_samps])
 
         # do noise injection with probablitiy noise_p
         if self.train and np.random.random() < self.noise_p:
@@ -139,8 +147,12 @@ class BirdClefMelDataset(Dataset):
             mel_noise *= torch.distributions.uniform.Uniform(0.01, 0.5).sample([1])
 
             # add noise to the splits
-            for split in range(mel_normal.shape[0]):
-                mel_normal[split, :, :] += mel_noise[:, :self.dur_samps]
+            if self.slicing:
+                for split in range(mel_normal.shape[0]):
+                    mel_normal[split, :, :] += mel_noise[:, :self.dur_samps]
+            else:
+                mel_normal += mel_noise
+
             mel_normal = normalize_0_1(mel_normal)
 
         # load the labels
@@ -149,9 +161,7 @@ class BirdClefMelDataset(Dataset):
         else:
             label = torch.tensor(self.pri_enc[index]).type(torch.LongTensor)
         
-        data = {}
-        data['mels'] = mel_normal
-        data['path'] = str(fpath)
+        data = {'mels': mel_normal, 'path': str(fpath)}
         return data, label
 
 

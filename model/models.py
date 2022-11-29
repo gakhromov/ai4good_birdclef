@@ -106,10 +106,9 @@ class CNNModel(nn.Module):
         # dense layers
         self.d1 = nn.Linear(in_features=filts[-1]*4, out_features=dense[0])
         self.d2 = nn.Linear(in_features=dense[0], out_features=dense[1])
-        self.d3 = nn.Linear(in_features=dense[1], out_features=dense[2])
 
         # final layers
-        self.final = nn.Linear(in_features=dense[2], out_features=config['n_classes'])
+        self.final = nn.Linear(in_features=dense[-1], out_features=config['n_classes'])
 
     def forward(self, x):
         # encode
@@ -127,9 +126,6 @@ class CNNModel(nn.Module):
         x = self.drop(x)
         x = self.d2(x)
         x = self.drop(x)
-        x = self.d3(x)
-        x = self.drop(x)
-
         x = self.final(x)
 
         return x

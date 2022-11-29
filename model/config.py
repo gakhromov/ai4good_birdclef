@@ -5,7 +5,6 @@ config = {
     "n_folds": 2,
     "num_classes": 152,
     "train_batch_size": 1,
-    "valid_batch_size": 1,
     "learning_rate": 1e-4,
     "device": 'cuda',
     "scheduler": 'OneCycle',
@@ -15,13 +14,14 @@ config = {
     "data_path": 'datasets/birdclef22',
     "mel_path": 'data_processing/numpy_mel',
     "use_secondary": False,
+    "use_slices": False
 }
 
 cnn_conf = {
-    'filters': [16, 32, 64, 128, 256],
+    'filters': [32, 64, 128, 256, 512],
     'kernels': [(3, 3), (3, 5), (3, 5), (3, 5), (3, 5)],
     'strides': [(2, 2), (2, 2), (1, 3), (1, 3), (1, 3)],
-    'dense': [256, 256, 256],
+    'dense': [512, 256],
     'dropout': True,
     'batch_norm': True,
     'activation': 'relu',
