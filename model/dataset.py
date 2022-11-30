@@ -151,7 +151,7 @@ class BirdClefMelDataset(Dataset):
                 for split in range(mel_normal.shape[0]):
                     mel_normal[split, :, :] += mel_noise[:, :self.dur_samps]
             else:
-                mel_normal += mel_noise
+                mel_normal += mel_noise[:,:self.dur_samps]
 
             mel_normal = normalize_0_1(mel_normal)
 
