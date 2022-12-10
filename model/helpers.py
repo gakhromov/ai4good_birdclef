@@ -4,13 +4,37 @@ from torch import nn
 import numpy as np
 import colorednoise as cn
 import random
+from config import config
+from torchmetrics import Precision, Recall, F1Score
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+
+    def __init__(self):
+        self.count = None
+        self.sum = None
+        self.avg = None
+        self.val = None
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
 
 
 def flatten_list(l):
     return [item for sublist in l for item in sublist]
 
 
-def fetch_scheduler(optimizer, sched: str, spe: int, epochs: int):
+def fetch_scheduler(optimizer, sched: str, spe: int = None, epochs: int = None):
     """
     It returns a scheduler object based on the string passed in the config file
     
@@ -21,10 +45,10 @@ def fetch_scheduler(optimizer, sched: str, spe: int, epochs: int):
     if sched == 'CosineAnnealingLR':
         scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
     elif sched == 'CosineAnnealingWarmRestarts':
-        scheduler = lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1)
+        scheduler = lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=3, T_mult=2)
     elif sched == 'OneCycle':
-        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=1e-3, steps_per_epoch=spe, epochs=epochs)
-    elif sched == None:
+        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=config['learning_rate'], steps_per_epoch=spe, epochs=epochs)
+    elif sched is None:
         return None
 
     return scheduler
@@ -109,3 +133,17 @@ def add_random_noise(y, max_noise_level=0.5):
 def add_noise(y, noise_scale=0.5):
     noise_fn = [add_white_noise, add_pink_noise, add_random_noise]
     return random.choice(noise_fn)(y) * noise_scale
+
+
+def varying_threshold_metrics(preds, targets, targets_thresh=0.2):
+    thresholds = np.linspace(0,0.5,20)
+    metrics = []
+    targets = torch.tensor(targets >= targets_thresh, dtype=torch.long)
+    print(targets)
+    for thresh in thresholds:
+        p = Precision(num_labels=152, threshold=thresh, average='macro', task='multilabel', multidim_average='global')(preds, targets).item()
+        r = Recall(num_labels=152, threshold=thresh, average='macro', task='multilabel', multidim_average='global')(preds, targets).item()
+        f1 = F1Score(num_labels=152, threshold=thresh, average='macro', task='multilabel', multidim_average='global')(preds, targets).item()
+        metrics.append([p, r, f1])
+    results = np.column_stack((thresholds, metrics))
+    return results

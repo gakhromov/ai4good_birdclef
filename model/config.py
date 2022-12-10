@@ -4,17 +4,17 @@ config = {
     "n_classes": 152,
     "n_folds": 2,
     "num_classes": 152,
-    "train_batch_size": 1,
+    "train_batch_size": 2,
     "learning_rate": 1e-4,
     "device": 'cuda',
     "scheduler": 'OneCycle',
     "weight_decay": 1e-6,
-
+    "ast": True,
     # DATA SETTINGS
-    "data_path": 'datasets/birdclef22',
-    "mel_path": 'data_processing/numpy_mel',
-    "use_secondary": False,
-    "use_slices": False
+    "data_path": 'datasets/numpy_mel',
+    "use_secondary": True,
+    "use_slices": False,
+    "mixup": True
 }
 
 cnn_conf = {
