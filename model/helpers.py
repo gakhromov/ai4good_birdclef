@@ -4,13 +4,39 @@ from torch import nn
 import numpy as np
 import colorednoise as cn
 import random
+from config import config
+from torchmetrics import Precision, Recall
+from sklearn.metrics import precision_recall_fscore_support
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+
+    def __init__(self):
+        self.count = None
+        self.sum = None
+        self.avg = None
+        self.val = None
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
 
 
 def flatten_list(l):
     return [item for sublist in l for item in sublist]
 
 
-def fetch_scheduler(optimizer, sched: str, spe: int, epochs: int):
+def fetch_scheduler(optimizer, sched: str, spe: int = None, epochs: int = None):
     """
     It returns a scheduler object based on the string passed in the config file
     
@@ -19,12 +45,13 @@ def fetch_scheduler(optimizer, sched: str, spe: int, epochs: int):
     :return: The scheduler is being returned.
     """
     if sched == 'CosineAnnealingLR':
-        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=1e-4)
     elif sched == 'CosineAnnealingWarmRestarts':
-        scheduler = lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1)
+        scheduler = lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2, eta_min=1e-5)
     elif sched == 'OneCycle':
-        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=1e-3, steps_per_epoch=spe, epochs=epochs)
-    elif sched == None:
+        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=config['learning_rate'], steps_per_epoch=spe,
+                                            epochs=epochs)
+    elif sched is None:
         return None
 
     return scheduler
@@ -109,3 +136,40 @@ def add_random_noise(y, max_noise_level=0.5):
 def add_noise(y, noise_scale=0.5):
     noise_fn = [add_white_noise, add_pink_noise, add_random_noise]
     return random.choice(noise_fn)(y) * noise_scale
+
+
+@torch.no_grad()
+def varying_threshold_metrics(preds, targets, targets_thresh=0.2):
+    thresholds = np.linspace(0, 0.5, 20)
+    metrics = []
+    targets = torch.tensor(targets >= targets_thresh, dtype=torch.long)
+    for thresh in thresholds:
+        precision = Precision(num_labels=152, threshold=thresh, average='micro', task='multilabel',
+                              multidim_average='global').to(device=config['device'])
+        recall = Recall(num_labels=152, threshold=thresh, average='micro', task='multilabel',
+                        multidim_average='global').to(device=config['device'])
+        p = precision(preds, targets).item()
+        r = recall(preds, targets).item()
+        f1 = 2 * p * r / (p + r) if not p * r == 0 else 0
+        metrics.append([p, r, f1])
+    results = np.column_stack((thresholds, metrics))
+    return results
+
+
+def varying_threshold_metrics_sklearn(preds, targets, targets_thresh=0.2):
+    thresholds = np.linspace(0, 0.5, 20)
+    metrics = []
+    targets_binary = torch.tensor(targets >= targets_thresh, dtype=torch.long).view(-1).numpy()
+    preds_binary = [torch.tensor(preds >= thresh, dtype=torch.long).view(-1).numpy() for thresh in thresholds]
+    for i, thresh in enumerate(thresholds):
+        preds_thresh = preds_binary[i]
+        p, r, f1, _ = precision_recall_fscore_support(targets_binary, preds_thresh, average='binary', zero_division=0)
+        metrics.append([thresh, p, r, f1])
+    return metrics
+
+
+def calculate_metrics_sklearn(preds, targets, targets_thresh=0.2, preds_thresh=0.5):
+    targets_binary = torch.tensor(targets >= targets_thresh, dtype=torch.long).view(-1).numpy()
+    preds = torch.tensor(preds >= preds_thresh, dtype=torch.long).view(-1).numpy()
+    p, r, f1, _ = precision_recall_fscore_support(targets_binary, preds, average='micro', zero_division=0)
+    return [p, r, f1]
