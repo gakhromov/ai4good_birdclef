@@ -23,7 +23,7 @@ SKLEARN_METRICS = False
 def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoch):
     device = conf.device
     loss_bce = torch.nn.BCEWithLogitsLoss()
-    loss_ce = torch.nn.CrossEntropyLoss(label_smoothing=1e-3, reduction='none')
+    loss_ce = torch.nn.CrossEntropyLoss(label_smoothing=1e-2, reduction='none')
 
     if train:
         model.train()
