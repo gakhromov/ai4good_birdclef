@@ -10,6 +10,7 @@ from albumentations.augmentations import CoarseDropout
 from torchaudio.transforms import MelSpectrogram, AmplitudeToDB, FrequencyMasking, TimeMasking
 from torchaudio.backend import soundfile_backend
 
+
 def combine_labels(prim, sec):
     # remove all the signs
     sec = sec.replace("'", "")
@@ -32,10 +33,10 @@ def get_dataset(args):
     print(f"Read config {config}")
     df = pd.read_csv(f'{path}/augmented.csv')
     if args.mixup:
-        print("="*10)
+        print("=" * 10)
         print("MIXUP ACTIVATED")
-        print("="*10)
-    
+        print("=" * 10)
+
     # make folds, stratify with primary labels anyways, even when we have secondary label usage
     skf = StratifiedGroupKFold(n_splits=config['n_folds'], shuffle=True, random_state=42)
     for k, (_, val_ind) in enumerate(skf.split(X=df, y=df['primary_label'], groups=df['file'])):
@@ -56,8 +57,8 @@ def get_dataset_pretrain(args):
 
     print(f"Read config {config}")
     df = pd.read_csv(f'{path}/augmented.csv')
-    if args.mixup: raise("No mixup in pretrain!")
-    
+    if args.mixup: raise ("No mixup in pretrain!")
+
     # make folds, stratify with primary labels anyways, even when we have secondary label usage
     skf = StratifiedGroupKFold(n_splits=config['n_folds'], shuffle=True, random_state=42)
     for k, (_, val_ind) in enumerate(skf.split(X=df, y=df['primary_label'], groups=df['file'])):
@@ -87,21 +88,21 @@ def get_data(df, fold, args, type="mel", sec=False):
         valid_dataset = BirdClefMelDataset(train=False, args=args, df=valid_df, use_secondary=sec)
     else:
         raise ("Wrong Dataset type chosen.")
-    
+
     # auto fix batch size of slicing
     bs = 1 if config['use_slices'] else config['train_batch_size']
     # generate train loaders
     train_loader = DataLoader(train_dataset,
                               batch_size=bs,
-                              num_workers=4,
-                              prefetch_factor=4,
+                              num_workers=8,
+                              prefetch_factor=2,
                               pin_memory=True,
                               shuffle=True)
 
     valid_loader = DataLoader(valid_dataset,
                               batch_size=bs,
-                              num_workers=4,
-                              prefetch_factor=4,
+                              num_workers=8,
+                              prefetch_factor=2,
                               pin_memory=True,
                               shuffle=False)
 
@@ -118,7 +119,7 @@ class BirdClefMelDataset(Dataset):
                  ):
         self.train = train
         self.df = df
-        self.aug = CoarseDropout(max_holes=5,max_height=8, max_width=30, p=0.5)
+        self.aug = CoarseDropout(max_holes=5, max_height=8, max_width=30, p=0.5)
         self.noise_p = noise_p
         self.secondary = use_secondary
         self.df_paths = df['path']
@@ -130,10 +131,10 @@ class BirdClefMelDataset(Dataset):
         self.hl = signal_conf['hop_length']
         self.dur = signal_conf['len_segment']
         self.dur_samps = int(self.dur * self.sr / self.hl + 1)
-        self.dur_window = (3*self.dur_samps) // 4 # 25% overlap
+        self.dur_window = (3 * self.dur_samps) // 4  # 25% overlap
         self.noise_files = [f'{args.data_path}/noise/{f}' for f in os.listdir(f'{args.data_path}/noise')]
         self.slicing = config['use_slices']
-        self.mapping = pd.read_csv(f"{args.data_path}/mapping.csv").iloc[:,1].to_list()
+        self.mapping = pd.read_csv(f"{args.data_path}/mapping.csv").iloc[:, 1].to_list()
 
     def __len__(self):
         return len(self.df)
@@ -147,12 +148,12 @@ class BirdClefMelDataset(Dataset):
 
         # pad with zeros if the audio is not of the length 'dur_samps + k * dur_window, k>=0'
         if mel.shape[1] < self.dur_samps:
-            to_pad = self.dur_samps - mel.shape[1] # pad to len = dur_samps
+            to_pad = self.dur_samps - mel.shape[1]  # pad to len = dur_samps
             pad = np.zeros((mel.shape[0], to_pad))
             mel = np.column_stack((mel, pad))
         elif (mel.shape[1] - self.dur_samps) % self.dur_window != 0 and self.slicing:
             residual_time = (mel.shape[1] - self.dur_samps) % self.dur_window
-            to_pad = self.dur_window - residual_time # pad to len = dur_samps + k * dur_window
+            to_pad = self.dur_window - residual_time  # pad to len = dur_samps + k * dur_window
             pad = np.zeros((mel.shape[0], to_pad))
             mel = np.column_stack((mel, pad))
 
@@ -161,8 +162,8 @@ class BirdClefMelDataset(Dataset):
             num_chunks = (mel.shape[1] - self.dur_samps) // self.dur_window + 1
             mels = []
             for chunk in range(num_chunks):
-                start = chunk*self.dur_window
-                mel_chunk = mel[:, start:start+self.dur_samps]
+                start = chunk * self.dur_window
+                mel_chunk = mel[:, start:start + self.dur_samps]
                 mels.append(mel_chunk)
             # convert to torch tensor
             mel_normal = np.array(mels)
@@ -171,8 +172,8 @@ class BirdClefMelDataset(Dataset):
             if mel.shape[1] == self.dur_samps:
                 start = 0
             else:
-                start = np.random.randint(0,mel.shape[1] - self.dur_samps)
-            mel_normal = mel[:,start:start+self.dur_samps]
+                start = np.random.randint(0, mel.shape[1] - self.dur_samps)
+            mel_normal = mel[:, start:start + self.dur_samps]
 
         # do noise injection with probablitiy noise_p
         if self.train and np.random.random() < self.noise_p and self.noise_files != []:
@@ -188,9 +189,9 @@ class BirdClefMelDataset(Dataset):
                 noise_start = np.random.randint(0, mel_noise.shape[1] - self.dur_samps)
             if self.slicing:
                 for split in range(mel_normal.shape[0]):
-                    mel_normal[split, :, :] += mel_noise[:, noise_start:noise_start+self.dur_samps]
+                    mel_normal[split, :, :] += mel_noise[:, noise_start:noise_start + self.dur_samps]
             else:
-                mel_normal += mel_noise[:,noise_start:noise_start+self.dur_samps]
+                mel_normal += mel_noise[:, noise_start:noise_start + self.dur_samps]
 
             mel_normal = normalize_0_1(mel_normal)
 
@@ -202,15 +203,14 @@ class BirdClefMelDataset(Dataset):
             label = torch.tensor(self.sec_enc[index]).type(torch.FloatTensor)
         else:
             label = torch.tensor(self.mapping.index(self.pri_dec[index])).type(torch.LongTensor)
-            #label = torch.tensor(self.pri_enc[index]).type(torch.LongTensor)
-        
+            # label = torch.tensor(self.pri_enc[index]).type(torch.LongTensor)
+
         data = {
             'mels': torch.FloatTensor(mel_normal),
             'path': str(fpath),
             'score': float(self.scores[index])
         }
         return data, label
-
 
 
 class BirdClefMixUpMelDataset(Dataset):
@@ -239,7 +239,7 @@ class BirdClefMixUpMelDataset(Dataset):
         self.noise_files = [f'{args.data_path}/noise/{f}' for f in os.listdir(f'{args.data_path}/noise')]
         self.freq_masking = FrequencyMasking(freq_mask_param=12)
         self.time_masking = TimeMasking(time_mask_param=128)
-        self.mapping = pd.read_csv(f"{args.data_path}/mapping.csv").iloc[:,1].to_list()
+        self.mapping = pd.read_csv(f"{args.data_path}/mapping.csv").iloc[:, 1].to_list()
 
     def __len__(self):
         return len(self.df)
@@ -271,34 +271,32 @@ class BirdClefMixUpMelDataset(Dataset):
 
         # do mixup
         r = np.random.beta(0.4, 0.4)
-        mel = mel * r + mel_mix * (1 - r) #TODO make better scaling according to amplitude
+        mel = mel * r + mel_mix * (1 - r)  # TODO make better scaling according to amplitude
 
         # add noise to it
         if self.train and np.random.random() < self.noise_p:
             noise_path = random.choice(self.noise_files)
             spec_noise = np.load(noise_path, allow_pickle=True)
             spec_noise = spec_noise.f.mel
-            mel_noise = np.random.random() * 0.5 * normalize_0_1(spec_noise) #TODO maybe sample differently
+            mel_noise = np.random.random() * 0.5 * normalize_0_1(spec_noise)  # TODO maybe sample differently
             mel_noise = sample_chunk(mel_noise, self.dur_samps)
             mel += mel_noise
             mel = normalize_0_1(mel)
 
-
         if self.train:
             # do augmentations
             mel = torch.from_numpy(mel).unsqueeze(0)
-            mel = self.freq_masking(mel) # masking needs a batch dimension at dim 0
+            mel = self.freq_masking(mel)  # masking needs a batch dimension at dim 0
             mel = self.time_masking(mel).squeeze()
-            
+
         data = {
             'mels': mel,
             'path': str(self.df_paths[index]),
             'score': float(self.scores[index]),
             'rval': float(r)
         }
-        
+
         return data, labels
-    
 
     def preprocess_sample(self, index):
         s = self.df.iloc[index, :]
@@ -306,13 +304,13 @@ class BirdClefMixUpMelDataset(Dataset):
         length = s['length']
         label = self.sec_enc[index]
         label = torch.tensor(label).type(torch.FloatTensor)
-        start = 0 if length <= self.dur * self.sr else np.random.randint(0, length - self.dur*self.sr)
+        start = 0 if length <= self.dur * self.sr else np.random.randint(0, length - self.dur * self.sr)
         # read audio and make mono
-        y = soundfile_backend.load(path1, frame_offset=start, num_frames=32_000*30)[0]
-        y = torch.mean(y, dim=0) 
+        y = soundfile_backend.load(path1, frame_offset=start, num_frames=32_000 * 30)[0]
+        y = torch.mean(y, dim=0)
         # padding
-        if len(y) < self.dur*self.sr:
-            y = torch.cat((y, torch.zeros(self.dur*self.sr - len(y))), dim=-1)
+        if len(y) < self.dur * self.sr:
+            y = torch.cat((y, torch.zeros(self.dur * self.sr - len(y))), dim=-1)
         y = normalize_plus_minus_1(y)
         return y, label
 
@@ -341,13 +339,13 @@ class BirdClefMixUpOggDataset(Dataset):
         self.ampdb = AmplitudeToDB(stype="power", top_db=80)
         self.melspec = MelSpectrogram(
             sample_rate=32_000,
-            n_fft = 1024,
-            f_min = 200,
-            f_max= 12_000,
-            n_mels = 128,
+            n_fft=1024,
+            f_min=200,
+            f_max=12_000,
+            n_mels=128,
             hop_length=512,
             normalized=True
-            )
+        )
         self.freq_masking = FrequencyMasking(freq_mask_param=12)
         self.time_masking = TimeMasking(time_mask_param=128)
 
@@ -362,13 +360,13 @@ class BirdClefMixUpOggDataset(Dataset):
             y2, label2 = self.preprocess_sample(index_2)
             # do mixup
             r = np.random.random()
-            sound = y1 * r + y2 * (1 - r) #TODO make better scaling according to amplitude
-            label = label1*r + label2*(1-r)
+            sound = y1 * r + y2 * (1 - r)  # TODO make better scaling according to amplitude
+            label = label1 * r + label2 * (1 - r)
             # clamp the label, add positive label smoothing
-            label = label.clamp(0.01,1)
+            label = label.clamp(0.01, 1)
         else:
             sound, label = self.preprocess_sample(index)
-        
+
         # calculate mel spectrum
         mel = self.melspec(sound)
 
@@ -390,7 +388,6 @@ class BirdClefMixUpOggDataset(Dataset):
         }
 
         return data, label
-    
 
     def preprocess_sample(self, index):
         s = self.df.iloc[index, :]
@@ -398,13 +395,13 @@ class BirdClefMixUpOggDataset(Dataset):
         length = s['length']
         label = self.sec_enc[index]
         label = torch.tensor(label).type(torch.FloatTensor)
-        start = 0 if length <= self.dur * self.sr else np.random.randint(0, length - self.dur*self.sr)
+        start = 0 if length <= self.dur * self.sr else np.random.randint(0, length - self.dur * self.sr)
         # read audio and make mono
-        y = soundfile_backend.load(path1, frame_offset=start, num_frames=32_000*30)[0]
-        y = torch.mean(y, dim=0) 
+        y = soundfile_backend.load(path1, frame_offset=start, num_frames=32_000 * 30)[0]
+        y = torch.mean(y, dim=0)
         # padding
-        if len(y) < self.dur*self.sr:
-            y = torch.cat((y, torch.zeros(self.dur*self.sr - len(y))), dim=-1)
+        if len(y) < self.dur * self.sr:
+            y = torch.cat((y, torch.zeros(self.dur * self.sr - len(y))), dim=-1)
         y = normalize_plus_minus_1(y)
         return y, label
 
@@ -415,16 +412,18 @@ def sample_chunk(mel, duration):
     if mel.shape[1] == duration:
         return mel
     else:
-        start = np.random.randint(0,mel.shape[1] - duration)
-        mel = mel[:,start:start+duration]
+        start = np.random.randint(0, mel.shape[1] - duration)
+        mel = mel[:, start:start + duration]
     return mel
-    
+
+
 def pad_mel(mel, duration):
     if mel.shape[1] < duration:
-        to_pad = duration - mel.shape[1] # pad to len = dur_samps
+        to_pad = duration - mel.shape[1]  # pad to len = dur_samps
         pad = np.zeros((mel.shape[0], to_pad))
         mel = np.column_stack((mel, pad))
     return mel
+
 
 def normalize_0_1(tensor):
     tensor = tensor - tensor.min()
@@ -449,6 +448,7 @@ def onehot_primary(label, n_classes=152):
     x = torch.zeros(152)
     x[label] = 1
     return x
+
 
 def str_array_to_array(str_arr):
     array = []

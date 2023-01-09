@@ -2,19 +2,18 @@ config = {
     # TRAIN SETTINGS
     "epochs": 50,
     "n_classes": 152,
-    "n_folds": 2,
+    "n_folds": 3,
     "num_classes": 152,
     "train_batch_size": 2,
-    "learning_rate": 1e-4,
+    "learning_rate": 1e-3,
     "device": 'cuda',
     "scheduler": 'OneCycle',
-    "weight_decay": 1e-6,
-    "ast": True,
+    "weight_decay": 1e-7,
+    "ast": True, # Training with Audio Spectrogram Transformer
     # DATA SETTINGS
-    "data_path": 'datasets/numpy_mel',
-    "use_secondary": True,
-    "use_slices": False,
-    "mixup": True
+    "use_secondary": False, # use secondary labels => multi-label training
+    "use_slices": False, # use slicing => trains on whole recordings
+    "mixup": False
 }
 
 cnn_conf = {
@@ -38,4 +37,4 @@ signal_conf = {
     "hop_length": 512
 }
 
-wandb_key="13be45bcff4cb1b250c86080f4b3e7ca5cfd29c2"
+wandb_key = None

@@ -10,20 +10,35 @@ import wandb
 import argparse
 from contextlib import nullcontext
 import numpy as np
-from torchvision.ops import sigmoid_focal_loss
 import warnings
 import pandas as pd
-from dataset import onehot_primary
 from sklearn.metrics import precision_recall_fscore_support
-
-warnings.filterwarnings("ignore")
+import os
+# set debugging, which prints additional info
 DEBUG = False
-SKLEARN_METRICS = False
+if not DEBUG:
+    warnings.filterwarnings("ignore")
+
+# wheter to use sklearn metrics to calculate the scores, default is pytorch
+SKLEARN_METRICS = True
+
 
 def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoch):
+    """
+    Does one epoch of either training or evaluation.
+    
+    :param train: boolean, whether to train or test
+    :param model: the model to train
+    :param data_loader: a DataLoader object that iterates over the training data
+    :param optimizer: the optimizer used to train the model
+    :param scheduler: the learning rate scheduler
+    :param scaler: a scaler object that will scale the gradients
+    :param conf: a dictionary containing the configuration of the model
+    :param epoch: the current epoch number
+    """
     device = conf.device
     loss_bce = torch.nn.BCEWithLogitsLoss()
-    loss_ce = torch.nn.CrossEntropyLoss(label_smoothing=1e-2, reduction='none')
+    loss_ce = torch.nn.CrossEntropyLoss(label_smoothing=1e-3, reduction='none')
 
     if train:
         model.train()
@@ -33,7 +48,6 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
         model.eval()
         prefix = "Valid"
         context = torch.no_grad()
-
 
     predictions = torch.tensor([], device=device)
     targets = torch.tensor([], device=device)
@@ -48,13 +62,12 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
 
             # extract the labels in case of mixup
             if conf.mixup:
-                #labels = torch.stack(labels)
                 label1 = labels[0].to(device=device, non_blocking=True)
                 label2 = labels[1].to(device=device, non_blocking=True)
                 r = data['rval'].to(device=device, non_blocking=True)
             else:
                 labels = labels.to(device=device, non_blocking=True)
-            
+
             score = data['score'].to(device=device)
 
             with torch.cuda.amp.autocast():
@@ -68,7 +81,7 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
 
                     for i, s in enumerate(slices):
                         if conf.ast:
-                            s = s.squeeze(1) # squeeze out the channel dimension for ast model
+                            s = s.squeeze(1)  # squeeze out the channel dimension for ast model
                         s = s.to(device=device, non_blocking=True)
                         pred = model(s)
                         outputs = torch.cat((outputs, pred), dim=0)
@@ -85,10 +98,10 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
                     # do bce loss plus focal loss
                     loss = loss_bce(outputs, labels)
                 elif conf.mixup:
-                    loss = r * loss_ce(outputs, label1) + (1-r) * loss_ce(outputs, label2)
+                    loss = r * loss_ce(outputs, label1) + (1 - r) * loss_ce(outputs, label2)
                     loss = torch.mean(loss, dim=0)
                 else:
-                    loss_scaled =  loss_ce(outputs, labels) * score / 5
+                    loss_scaled = loss_ce(outputs, labels) * score / 5
                     loss = torch.mean(loss_scaled, dim=0)
 
             # calculate sigmoid for multilabel
@@ -100,11 +113,9 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
             # plot the last result in a good way TODO change to last
             if i == 0 and DEBUG:
                 try:
-                    #log_imgs = [wandb.Image(img) for img in mels.detach().cpu().numpy()]
                     log_labels = [label for label in labels.detach().cpu().numpy()]
                     log_preds = [pred for pred in preds.detach().cpu().numpy()]
                     log_preds_thresh = [np.array(pred > 0.2, dtype=np.int8) for pred in preds.detach().cpu().numpy()]
-                    #log_imgs = [wandb.Image(img) for img in mels.detach().cpu().numpy()]
                     log_labels = [label for label in labels.detach().cpu().numpy()]
                     log_preds = [pred for pred in preds.detach().cpu().numpy()]
                     log_preds_thresh = [np.array(pred > 0.2, dtype=np.int8) for pred in preds.detach().cpu().numpy()]
@@ -124,47 +135,48 @@ def do_epoch(train, model, data_loader, optimizer, scheduler, scaler, conf, epoc
                 if scheduler is not None:
                     scheduler.step(epoch + i / iters)
                 del outputs, mels
-                #torch.cuda.empty_cache()
 
             running_loss += loss.item()
 
             # append for metrics in validation
             predictions = torch.cat((predictions, preds.detach()), dim=0)
             if conf.mixup:
-                labels = torch.where(r>(1-r), label1, label2)
+                labels = torch.where(r > (1 - r), label1, label2)
                 targets = torch.cat((targets, labels.detach()), dim=0)
             else:
                 targets = torch.cat((targets, labels.detach()), dim=0)
-            loop.set_description(f"{prefix} Epoch [{epoch}]")
+            loop.set_description(f"{prefix} Epoch [{epoch + 1}/{conf.epochs}")
             loop.set_postfix(loss=loss.item())
 
             if DEBUG:
                 break
-    
+
     # calculate metrics for varying thresholds
-    if SKLEARN_METRICS or conf.pretrain or conf.mixup:
+    if not conf.use_secondary:
         p, r, f1, _ = precision_recall_fscore_support(
-            y_pred= predictions.cpu().view(-1).numpy(),
-            y_true= targets.cpu().view(-1).numpy(),
+            y_pred=predictions.cpu().view(-1).numpy(),
+            y_true=targets.cpu().view(-1).numpy(),
             zero_division=0,
-            average='macro'
+            average='micro'
         )
-        wandb.log({
-            f"{prefix} Precision": p,
-            f"{prefix} Recall": r,
-            f"{prefix} F1": f1,
+        if wandb_key is not None:
+            wandb.log({
+                f"{prefix} Precision": p,
+                f"{prefix} Recall": r,
+                f"{prefix} F1": f1,
             }, step=epoch)
-    # VARYING THRESHOLD WHICH ONLY MAKES SENSE AT INFERENCE
     else:
         metrics = varying_threshold_metrics(predictions, targets)
         results = pd.DataFrame(data=metrics, columns=["threshold", "precision", "recall", "f1 score"])
-        wandb.log({f"{prefix} Results": wandb.Table(dataframe=results)}, step=epoch)
         f1 = results['f1 score'].max()
-        wandb.log({f"Best {prefix} f1": f1}, step=epoch)
+        if wandb_key is not None:
+            wandb.log({f"{prefix} Results": wandb.Table(dataframe=results)}, step=epoch)
+            wandb.log({f"Best {prefix} f1": f1}, step=epoch)
 
     # LOG TO WANDB
     running_loss /= len(data_loader)
-    wandb.log({f"{prefix} loss": running_loss}, step=epoch)
+    if wandb_key is not None:
+        wandb.log({f"{prefix} loss": running_loss}, step=epoch)
     return f1, running_loss
 
 
@@ -177,20 +189,21 @@ def run(data, fold, args):
         model = get_model("ast").to(cfg.device)
     else:
         model = get_model("cnn").to(cfg.device)
-    
+
     if args.load_weights:
         name = 'ast' if cfg.ast else 'cnn'
         name += f'_{fold}.bin'
         model.load_state_dict(torch.load(f"pretrain/{name}"))
         print("Loaded weights!")
 
-    
-    wandb.watch(model)
+    if wandb_key is not None:
+        wandb.watch(model)
+        model_name = wandb.run.name
+    else:
+        model_name = 'ast' if cfg.ast else 'cnn'
 
     optimizer = AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
     scheduler = fetch_scheduler(optimizer, "OneCycle", spe=len(train_loader), epochs=cfg.epochs)
-    #scheduler = fetch_scheduler(optimizer, "CosineAnnealingLR")
-    #scheduler = None
     scaler = torch.cuda.amp.GradScaler()
 
     best_valid_f1 = 0
@@ -199,24 +212,27 @@ def run(data, fold, args):
     prefix = './pretrain/' if cfg.pretrain else './'
 
     for epoch in range(cfg.epochs):
-        do_epoch(True, model, train_loader, optimizer, scheduler, scaler, cfg, epoch)
-        _, val_loss = do_epoch(False, model, valid_loader, optimizer, scheduler, scaler, cfg, epoch)
+        do_epoch(True, model, train_loader, optimizer, scheduler, scaler, cfg, epoch + fold * cfg.epochs)
+        val_f1, val_loss = do_epoch(False, model, valid_loader, optimizer, scheduler, scaler, cfg, epoch + fold * cfg.epochs)
 
         if val_loss < best_valid_loss:
             print(f"Validation Loss Improved - {best_valid_loss} ---> {val_loss}")
-            torch.save(model.state_dict(),  f'{prefix}model_{fold}_{wandb.run.name}.bin')
-            print(f"Saved model checkpoint at {prefix}model_{fold}_{wandb.run.name}.bin")
             best_valid_loss = val_loss
+            torch.save(model.state_dict(), f'{prefix}model_{fold}_{model_name}.bin')
+            print(f"Saved model checkpoint at {prefix}model_{fold}_{model_name}.bin")
+        
+        if val_f1 > best_valid_f1:
+            print(f"Validation F1 Improved - {best_valid_f1} ---> {val_f1}")
+            best_valid_f1 = val_f1
 
-    return best_valid_loss
+    return best_valid_loss, best_valid_f1
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run the training pipeline")
-    parser.add_argument("--data_path",   type=str, default="../datasets/numpy_mel", help="Location of the metadata csv")
-    parser.add_argument("--data_folder", type=str, default="../datasets/numpy_mel/data", help="Location of the individual bird folders")
+    parser.add_argument("--data_path", type=str, default="../datasets/birdclef-2022", help="Location of the metadata csv")
     parser.add_argument("--pretrain", type=bool, default=False)
-    parser.add_argument("--load_weights", type=bool, default=True)
+    parser.add_argument("--load_weights", type=bool, default=False, help="Wheter to load pretrained weights or not.")
     args = parser.parse_args()
 
     # enable benchmark mode for more power
@@ -225,13 +241,15 @@ def main():
     # setup wandb
     args.use_secondary = config['use_secondary']
     args.mixup = config["mixup"]
+    args.data_folder = os.path.join(args.data_path, 'data')
 
-    wandb.login(key=wandb_key)
-    wandb.init(
-        project="ai4good",
-        entity="lessgoo",
-        config={**config, **cnn_conf}
-    )
+    if wandb_key is not None:
+        wandb.login(key=wandb_key)
+        wandb.init(
+            project="YOUR PROJECT",
+            entity="YOUR ENTITY",
+            config={**config, **cnn_conf}
+        )
 
     # get dataset
     dataset = get_dataset_pretrain(args) if args.pretrain == True else get_dataset(args)
@@ -240,19 +258,14 @@ def main():
         assert config['n_folds'] == 3
     # train n_folds models
     for fold in range(config['n_folds']):
-        # only do the first fold
-        if not fold == 0:
-            continue
         torch.cuda.empty_cache()
         print("=" * 30)
         print("Training Fold - ", fold)
         print("=" * 30)
-        best_val = run(dataset[fold], fold, args)
-        print(f'Best Loss: {best_val:.5f}')
-
+        best_param = run(dataset[fold], fold, args)
+        print(f'Best Loss: {best_param:.5f}')
         gc.collect()
         torch.cuda.empty_cache()
-        
 
 
 if __name__ == "__main__":
