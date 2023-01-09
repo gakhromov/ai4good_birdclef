@@ -67,8 +67,10 @@ Run the training with the following command
 python3 train.py --data_path ../datasets/birdclef-2022 --load_weights False
 ````
 the ``--data_path`` argument is the relative path to the dataset. The `--load_weights` is for
-loading precalculated weights during pretraining on another dataset like the 2021 data. For 3-fold
-models we have example weights that match the default config.
+loading precalculated weights during pretraining on another dataset like the 2021 data
+([Dataset](https://www.kaggle.com/datasets/mathiasvogel/bc21-pretrain-dataset) we used).
+For 3-fold models we have example weights that match the default config.
 
-All the necessary configurations can be set in the ``config`` file.
+All the necessary configurations can be set in the ``config`` file. To use WANDB provide
+your api key in the config file and set up the correct project settings in the train script.
 

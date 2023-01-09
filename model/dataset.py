@@ -298,21 +298,22 @@ class BirdClefMixUpMelDataset(Dataset):
 
         return data, labels
 
-    def preprocess_sample(self, index):
-        s = self.df.iloc[index, :]
-        path1 = s['path']
-        length = s['length']
-        label = self.sec_enc[index]
-        label = torch.tensor(label).type(torch.FloatTensor)
-        start = 0 if length <= self.dur * self.sr else np.random.randint(0, length - self.dur * self.sr)
-        # read audio and make mono
-        y = soundfile_backend.load(path1, frame_offset=start, num_frames=32_000 * 30)[0]
-        y = torch.mean(y, dim=0)
-        # padding
-        if len(y) < self.dur * self.sr:
-            y = torch.cat((y, torch.zeros(self.dur * self.sr - len(y))), dim=-1)
-        y = normalize_plus_minus_1(y)
-        return y, label
+
+def preprocess_sample(self, index):
+    s = self.df.iloc[index, :]
+    path1 = s['path']
+    length = s['length']
+    label = self.sec_enc[index]
+    label = torch.tensor(label).type(torch.FloatTensor)
+    start = 0 if length <= self.dur * self.sr else np.random.randint(0, length - self.dur * self.sr)
+    # read audio and make mono
+    y = soundfile_backend.load(path1, frame_offset=start, num_frames=32_000 * 30)[0]
+    y = torch.mean(y, dim=0)
+    # padding
+    if len(y) < self.dur * self.sr:
+        y = torch.cat((y, torch.zeros(self.dur * self.sr - len(y))), dim=-1)
+    y = normalize_plus_minus_1(y)
+    return y, label
 
 
 class BirdClefMixUpOggDataset(Dataset):
